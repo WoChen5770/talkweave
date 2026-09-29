@@ -18,6 +18,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 
+@org.springframework.context.annotation.Profile("!managed")
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "assistant.enabled", havingValue = "true", matchIfMissing = true)
 public class AssistantRuntimeConfiguration {

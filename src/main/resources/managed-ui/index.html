@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Talkweave · 管理端</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
+<body><header><div><span class="eyebrow">TALKWEAVE</span><h1>微信助手管理</h1></div><button id="logout" hidden>退出登录</button></header>
+<main><p id="notice" role="status" aria-live="polite"></p>
+<section id="login-panel" class="card narrow"><span class="eyebrow">管理员入口</span><h2>欢迎回来</h2><p class="muted">请使用首次启动时配置的管理员账号。</p><form id="login-form"><label>用户名<input name="username" autocomplete="username" required maxlength="64"></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><button type="submit" class="primary">登录管理端</button></form><p class="muted">未设置初始密码时不会开放管理权限。此页面不提供注册。</p></section>
+<div id="dashboard" hidden><aside class="warning"><strong>开发预览 · 真实扫码授权尚未开放</strong><p>目前可管理用户、全局配置及独立二维码任务。真实扫码身份映射尚未验证，扫码确认后会显示“无法确认身份”，不会授权。多连接运行链路已接入，正在使用合成接口验证，尚未完成真实双账号与容器验收。</p></aside>
+<p id="runtime-status" class="muted" role="status"></p>
+<nav aria-label="管理功能"><button data-tab="users-panel" class="active">用户</button><button data-tab="settings-panel">全局设置</button><button data-tab="audit-panel">操作审计</button></nav>
+<section id="users-panel" class="card tab"><div class="section-heading"><div><h2>用户管理</h2><p class="muted">每位用户独立授权、独立会话。管理端不提供聊天正文。</p></div><button id="reload-users">刷新</button></div><form id="user-form" class="inline"><label>用户备注<input name="label" maxlength="100" placeholder="例如：张同学" required></label><button type="submit" class="primary">新增用户</button></form><div class="table-wrap"><table><thead><tr><th>备注</th><th>用户状态</th><th>最近活动</th><th>操作</th></tr></thead><tbody id="users"></tbody></table></div><p id="users-empty" class="muted" hidden>还没有用户，从新增一位用户开始。</p><div id="usage" class="subcard" hidden>
+<div class="section-heading"><h3 id="usage-title"></h3><button id="usage-close" type="button">关闭详情</button></div>
+<dl id="user-values"></dl><div id="user-actions" class="dialog-actions"></div>
+<p class="muted">仅显示连接与统计信息，不提供聊天正文、附件或凭据。空闲超时只切换会话，不表示微信退出登录。</p>
+<h3>模型用量</h3><form id="usage-form"><div class="grid">
+<label class="wide">会话<select aria-label="会话" id="conversation-options" name="conversationId"></select></label>
+<div class="wide"><button id="conversation-more" type="button" hidden>加载更早会话</button></div>
+<label>开始时间（含，本机时区）<input name="from" type="datetime-local"></label>
+<label>结束时间（不含，本机时区）<input name="to" type="datetime-local"></label></div>
+<div class="dialog-actions"><button type="submit" class="primary">查询用量</button><button id="usage-reset" type="button">全部时间 / 全部会话</button></div></form>
+<p class="muted">时间按模型尝试开始时间筛选，留空表示不限。会话按创建顺序列出；历史绑定仅用于追溯统计，不会参与新身份的模型上下文。</p>
+<p id="usage-status" role="status" aria-live="polite"></p><dl id="usage-values"></dl>
+<p class="muted">仅展示已记录的模型尝试，没有记录不代表免费。异常尝试包含在“不完整”中，未报告是“不完整”的子集，不能相加。命中率只统计同时具备有效输入与缓存输入计数的调用；缓存输入是输入总量的子集，不额外累加。未知不是 0，不保证缓存优惠。</p></div></section>
+<section id="settings-panel" class="card tab" hidden><h2>全局设置</h2><form id="idle-form" class="inline"><label>会话空闲超时（分钟）<input name="minutes" type="number" min="1" max="1440" step="1" value="30" required></label><button type="submit" class="primary">保存超时</button></form><p class="muted">默认 30 分钟。下一条有效用户消息按新值判断是否开启新会话；不会删除历史或注销微信。</p><hr><h3>兼容模型服务</h3><p class="muted">支持兼容 Chat Completions 的中转站，无须选择厂商。兼容缓存依赖服务端，不能保证命中或折扣。</p><form id="model-form"><div class="grid"><label class="wide">API 基础地址<input name="apiBaseUrl" type="url" placeholder="https://relay.example.com" required></label><p class="muted wide">可包含网关前缀，不要包含 /v1 或 /chat/completions，程序会追加协议路径。</p><label>模型名称<input name="name" maxlength="256" required></label><label>API Key（只写）<input name="apiKey" type="password" autocomplete="new-password" maxlength="4096" placeholder="留空保留已保存的 Key"></label><p id="key-status" class="muted wide"></p><label class="wide">系统提示词<textarea name="systemPrompt" rows="4" maxlength="32768" required>你是我的个人助手，请用中文清晰、准确地回答。</textarea></label><label>上下文容量<input name="contextCapacity" type="number" min="256" max="10000000" value="8192" required></label><label>输出预算<input name="outputBudget" type="number" min="1" value="1024" required></label><label>安全余量<input name="safetyMargin" type="number" min="0" value="512" required></label><label>历史轮数<input name="historyRounds" type="number" min="0" max="1000" value="20" required></label><label>单次请求超时（秒）<input name="requestTimeoutSeconds" type="number" min="1" max="300" value="60" required></label><label>请求总预算（秒）<input name="totalTimeBudgetSeconds" type="number" min="1" max="600" value="90" required></label><label>最多重试次数<input name="maxRetries" type="number" min="0" max="5" value="2" required></label><label class="check"><input name="allowInsecureLocalHttp" type="checkbox">允许本机或私有 IP 使用 HTTP（仅调试）</label></div><button type="submit" class="primary">保存模型配置</button></form><p class="muted">Key 不会从服务器读回。新调用使用新版本；在途调用保留原快照。保存不发起付费请求，也不代表连接已验证。</p></section>
+<section id="audit-panel" class="card tab" hidden><div class="section-heading"><div><h2>操作审计</h2><p class="muted">可按用户筛选和分页；不包含聊天内容、密码或 API Key。</p></div><button id="reload-audit">刷新</button></div><label>目标用户<select aria-label="目标用户" id="audit-user"><option value="">全部操作</option></select></label><div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>操作</th><th>目标</th><th>结果</th></tr></thead><tbody id="audit"></tbody></table></div><p id="audit-status" class="muted" role="status"></p><button id="audit-more" type="button" hidden>加载更早操作</button></section>
+</div>
+<dialog id="binding-dialog" aria-labelledby="binding-title" aria-describedby="binding-warning">
+  <div class="section-heading"><div><span class="eyebrow">独立机器人绑定</span><h2 id="binding-title"></h2></div><button id="binding-close" type="button">关闭</button></div>
+  <p id="binding-warning" class="muted">只向预期使用者展示此二维码。扫码者身份不由用户备注证明。关闭弹窗不会取消任务；取消或刷新后旧码不再授权。</p>
+  <p id="binding-mode" class="muted"></p><p id="binding-phase" role="status" aria-live="polite"></p>
+  <p id="binding-error" role="alert" hidden></p>
+  <div class="qr-stage"><img id="binding-image" alt="当前用户的短时微信绑定二维码" width="300" height="300" hidden><p id="binding-placeholder">正在读取任务…</p></div>
+  <p id="binding-countdown" class="muted"></p><p id="binding-task" class="muted task-id"></p>
+  <form id="pairing-form" class="inline" hidden><label>微信配对码<input name="code" type="text" inputmode="numeric" pattern="[0-9]{1,16}" maxlength="16" autocomplete="off" required></label><button type="submit" class="primary">提交配对码</button></form>
+  <div class="dialog-actions"><button id="binding-refresh" type="button">刷新二维码</button><button id="binding-cancel" type="button">取消任务</button></div>
+</dialog></main><footer>私有部署 · 请仅通过可信内网或受保护的 HTTPS 入口访问</footer></body></html>

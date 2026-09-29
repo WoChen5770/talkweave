@@ -3,6 +3,7 @@
 /.idea/
 *.iml
 /data/
+/data-managed/
 /config/
 .env
 .env.*

@@ -21,13 +21,15 @@ public final class FakeHttpService implements AutoCloseable {
     private final BlockingQueue<Reply> replies = new LinkedBlockingQueue<>();
     private final BlockingQueue<Request> requests = new LinkedBlockingQueue<>();
 
-    public FakeHttpService() throws IOException {
+    public FakeHttpService() throws IOException { this(request -> true); }
+    public FakeHttpService(java.util.function.Predicate<Request> accepts) throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.setExecutor(executor);
         server.createContext("/", exchange -> {
-            requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI(), Map.copyOf(exchange.getRequestHeaders()),
-                    new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)));
-            Reply reply = replies.poll();
+            var request = new Request(exchange.getRequestMethod(), exchange.getRequestURI(), Map.copyOf(exchange.getRequestHeaders()),
+                    new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            requests.add(request);
+            Reply reply = accepts.test(request) ? replies.poll() : new Reply(400, "{\"error\":\"unsupported request fields\"}", Map.of(), 0);
             if (reply == null) reply = new Reply(500, "{\"error\":\"no synthetic response queued\"}", Map.of(), 0);
             if (reply.delayMillis() > 0) {
                 try { Thread.sleep(reply.delayMillis()); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); exchange.close(); return; }

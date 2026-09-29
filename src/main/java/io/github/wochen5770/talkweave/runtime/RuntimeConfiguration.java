@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+@org.springframework.context.annotation.Profile("!managed")
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(AssistantProperties.class)
 public class RuntimeConfiguration {

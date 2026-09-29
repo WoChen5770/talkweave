@@ -30,6 +30,8 @@ public final class CompatibleChatClient implements AssistantService, AutoCloseab
     private final OpenAiChatModel model;
     private final HttpClient http;
     private final AssistantProperties.Model config;
+    private final Long modelVersion;
+    private final ThreadLocal<CompatibleUsageCapture> activeCapture = new ThreadLocal<>();
     private final java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
     private volatile boolean closed;
     private static final class RateLimited extends RuntimeException {
@@ -37,7 +39,11 @@ public final class CompatibleChatClient implements AssistantService, AutoCloseab
         RateLimited(java.time.Duration wait) { super("Model request explicitly rate limited"); this.wait = wait; }
     }
 
-    public CompatibleChatClient(AssistantProperties.Model config) {
+    public CompatibleChatClient(AssistantProperties.Model config) { this(config, null); }
+
+    public CompatibleChatClient(AssistantProperties.Model config, Long modelVersion) {
+        if (modelVersion != null && modelVersion < 1) throw new IllegalArgumentException("Invalid model version");
+        this.modelVersion = modelVersion;
         config.validate();
         this.config = config;
         http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER)
@@ -56,7 +62,12 @@ public final class CompatibleChatClient implements AssistantService, AutoCloseab
         };
         var api = OpenAiApi.builder().baseUrl(config.baseUri().toString()).apiKey(config.apiKey())
                 .completionsPath("/v1/chat/completions")
-                .restClientBuilder(RestClient.builder().requestFactory(requests))
+                .restClientBuilder(RestClient.builder().requestFactory(requests).requestInterceptor((request, body, execution) -> {
+                    var response = execution.execute(request, body);
+                    var capture = activeCapture.get();
+                    if (capture == null) { response.close(); throw new RemoteFailure(MODEL, INVALID_RESPONSE); }
+                    return capture.intercept(response);
+                }))
                 .responseErrorHandler(errorHandler).build();
         var options = OpenAiChatOptions.builder().model(config.name()).temperature(null)
                 .maxTokens(config.outputBudget()).internalToolExecutionEnabled(false).build();
@@ -66,9 +77,21 @@ public final class CompatibleChatClient implements AssistantService, AutoCloseab
     }
 
     @Override public Reply answer(List<DialogueMessage> messages) {
+        return answerInternal(messages, ModelAttemptObserver.noop());
+    }
+
+    public Reply answer(ModelRequestContext context, List<DialogueMessage> messages, ModelAttemptObserver observer) {
+        java.util.Objects.requireNonNull(context);
+        java.util.Objects.requireNonNull(observer);
+        if (modelVersion == null || modelVersion != context.modelVersion())
+            throw new IllegalArgumentException("Model configuration snapshot mismatch");
+        return answerInternal(messages, observer);
+    }
+
+    private Reply answerInternal(List<DialogueMessage> messages, ModelAttemptObserver observer) {
         if (messages == null || messages.isEmpty()) throw new IllegalArgumentException("At least one message is required");
         List<Message> input = new ArrayList<>();
-        for (var message : messages) {
+        for (var message : List.copyOf(messages)) {
             input.add(switch (message.role()) {
                 case SYSTEM -> new SystemMessage(message.text());
                 case USER -> new UserMessage(message.text());
@@ -80,41 +103,70 @@ public final class CompatibleChatClient implements AssistantService, AutoCloseab
             if (closed || Thread.currentThread().isInterrupted()) throw new RemoteFailure(MODEL, CONNECTION);
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) throw new RemoteFailure(MODEL, TIMEOUT);
-            var future = executor.submit(() -> model.call(new Prompt(input)));
-            try {
+            // Persist and recheck authorization BEFORE dispatch. Observer exceptions are never retryable.
+            observer.beforeAttempt(attempt + 1);
+            var capture = new CompatibleUsageCapture();
+            AttemptResult result = callOnce(input, capture, deadline);
+            observer.afterAttempt(attempt + 1, result.outcome(), capture.usage);
+            if (result.reply() != null) return result.reply();
+            if (!result.retryable() || attempt >= config.maxRetries()) throw result.failure();
+            java.time.Duration delay = result.delay() == null ? java.time.Duration.ofSeconds(Math.min(1L << attempt, 5)) : result.delay();
+            remaining = deadline - System.nanoTime();
+            if (remaining <= 0 || delay.compareTo(java.time.Duration.ofNanos(remaining)) >= 0) throw result.failure();
+            try { java.util.concurrent.TimeUnit.NANOSECONDS.sleep(delay.toNanos()); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new RemoteFailure(MODEL, CONNECTION); }
+        }
+    }
+
+    private record AttemptResult(Reply reply, RemoteFailure failure, boolean retryable,
+                                 java.time.Duration delay, ModelAttemptObserver.Outcome outcome) {
+        static AttemptResult failed(RemoteFailure failure, boolean retryable, java.time.Duration delay, ModelAttemptObserver.Outcome outcome) {
+            return new AttemptResult(null, failure, retryable, delay, outcome);
+        }
+    }
+
+    private AttemptResult callOnce(List<Message> input, CompatibleUsageCapture capture, long deadline) {
+        var failed = ModelAttemptObserver.Outcome.FAILED;
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) return AttemptResult.failed(new RemoteFailure(MODEL, TIMEOUT), false, null, failed);
+        java.util.concurrent.Future<org.springframework.ai.chat.model.ChatResponse> future;
+        try {
+            future = executor.submit(() -> {
+                activeCapture.set(capture);
+                try { return model.call(new Prompt(input)); }
+                finally { activeCapture.remove(); }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            return AttemptResult.failed(new RemoteFailure(MODEL, CONNECTION), false, null, failed);
+        }
+        try {
             var response = future.get(Math.min(config.requestTimeout().toNanos(), remaining), java.util.concurrent.TimeUnit.NANOSECONDS);
-            if (response == null || response.getResults() == null) throw new RemoteFailure(MODEL, INVALID_RESPONSE);
-            for (var generation : response.getResults()) {
-                String text = generation.getOutput() == null ? null : generation.getOutput().getText();
-                if (text != null && !text.isBlank()) {
-                    boolean truncated = "length".equalsIgnoreCase(generation.getMetadata().getFinishReason());
-                    return new Reply(text, truncated);
+            if (response != null && response.getResults() != null) {
+                for (var generation : response.getResults()) {
+                    String text = generation.getOutput() == null ? null : generation.getOutput().getText();
+                    if (text != null && !text.isBlank()) {
+                        boolean truncated = "length".equalsIgnoreCase(generation.getMetadata().getFinishReason());
+                        return new AttemptResult(new Reply(text, truncated, capture.usage), null, false, null, ModelAttemptObserver.Outcome.SUCCEEDED);
+                    }
                 }
             }
-            throw new RemoteFailure(MODEL, INVALID_RESPONSE);
-            } catch (java.util.concurrent.TimeoutException failure) {
-                future.cancel(true); // Dispatch may have happened: never submit another attempt.
-                throw new RemoteFailure(MODEL, TIMEOUT);
-            } catch (InterruptedException failure) {
-                future.cancel(true); Thread.currentThread().interrupt(); throw new RemoteFailure(MODEL, CONNECTION);
-            } catch (java.util.concurrent.ExecutionException failure) {
-                Throwable root = failure.getCause();
-                RateLimited limited = find(root, RateLimited.class);
-                boolean unsent = definitelyUnsent(root);
-                RemoteFailure safe = find(root, RemoteFailure.class);
-                if (limited == null && !unsent) {
-                    if (safe != null) throw safe;
-                    if (find(root, HttpTimeoutException.class) != null || find(root, java.util.concurrent.TimeoutException.class) != null) throw new RemoteFailure(MODEL, TIMEOUT);
-                    throw new RemoteFailure(MODEL, INVALID_RESPONSE);
-                }
-                RemoteFailure exhausted = limited != null ? new RemoteFailure(MODEL, HTTP, 429) : new RemoteFailure(MODEL, CONNECTION);
-                if (attempt >= config.maxRetries()) throw exhausted;
-                java.time.Duration delay = limited != null && limited.wait != null ? limited.wait : java.time.Duration.ofSeconds(Math.min(1L << attempt, 5));
-                remaining = deadline - System.nanoTime();
-                if (remaining <= 0 || delay.compareTo(java.time.Duration.ofNanos(remaining)) >= 0) throw exhausted;
-                try { java.util.concurrent.TimeUnit.NANOSECONDS.sleep(delay.toNanos()); }
-                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new RemoteFailure(MODEL, CONNECTION); }
-            }
+            return AttemptResult.failed(new RemoteFailure(MODEL, INVALID_RESPONSE), false, null, failed);
+        } catch (java.util.concurrent.TimeoutException failure) {
+            future.cancel(true);
+            return AttemptResult.failed(new RemoteFailure(MODEL, TIMEOUT), false, null, ModelAttemptObserver.Outcome.UNKNOWN);
+        } catch (InterruptedException failure) {
+            future.cancel(true); Thread.currentThread().interrupt();
+            return AttemptResult.failed(new RemoteFailure(MODEL, CONNECTION), false, null, ModelAttemptObserver.Outcome.CANCELLED);
+        } catch (java.util.concurrent.ExecutionException failure) {
+            Throwable root = failure.getCause();
+            RateLimited limited = find(root, RateLimited.class);
+            if (limited != null) return AttemptResult.failed(new RemoteFailure(MODEL, HTTP, 429), true, limited.wait, failed);
+            if (definitelyUnsent(root)) return AttemptResult.failed(new RemoteFailure(MODEL, CONNECTION), true, null, failed);
+            RemoteFailure safe = find(root, RemoteFailure.class);
+            if (safe != null) return AttemptResult.failed(safe, false, null, failed);
+            if (find(root, HttpTimeoutException.class) != null || find(root, java.util.concurrent.TimeoutException.class) != null)
+                return AttemptResult.failed(new RemoteFailure(MODEL, TIMEOUT), false, null, ModelAttemptObserver.Outcome.UNKNOWN);
+            return AttemptResult.failed(new RemoteFailure(MODEL, INVALID_RESPONSE), false, null, ModelAttemptObserver.Outcome.UNKNOWN);
         }
     }
     static boolean definitelyUnsent(Throwable failure) {
