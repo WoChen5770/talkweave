@@ -37,6 +37,10 @@
 - **WHEN** 操作者选择新的空数据目录
 - **THEN** 系统创建独立管理与多用户状态，要求重新开通用户，不访问或修改原部署目录
 
+#### Scenario: Upgrade a recognized managed database
+- **WHEN** 操作者备份并升级已识别的多用户 V1 数据库
+- **THEN** 系统在启动运行面前以独占事务迁移至 V2，保留管理员、用户、绑定、事件原始机器人身份、会话和用量；迁移失败回滚结构及版本，未知或旧单用户布局仍拒绝写入；降级要求恢复升级前备份
+
 ### Requirement: Configurable runtime identity with private state
 本版 Compose 默认 SHALL 显式使用 UID/GID `0:0`，并允许操作者覆盖。系统 MUST 仍限制数据目录、数据库及敏感状态访问，不使用 `777`、特权容器或 Docker socket 挂载作为权限修复。文档 MUST 说明 root 的风险、文件所有权影响及其不能绕过只读挂载、NAS ACL 或网络文件系统限制。
 

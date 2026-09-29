@@ -56,6 +56,9 @@ public final class ManagedStore implements AutoCloseable {
             }
             if (fresh) {
                 initialize(connection);
+            }
+            migrate(connection);
+            if (fresh) {
                 try (var statement = connection.createStatement()) { statement.execute("PRAGMA wal_checkpoint(TRUNCATE)"); }
                 Path marker = directory.resolve(MARKER);
                 Files.createFile(marker);
@@ -114,12 +117,16 @@ public final class ManagedStore implements AutoCloseable {
             }
             try (var readOnly = DriverManager.getConnection("jdbc:sqlite:" + copy.toUri().toASCIIString() + "?mode=ro");
                  var statement = readOnly.createStatement()) {
+                int version;
                 try (var rows = statement.executeQuery("SELECT version FROM managed_schema")) {
-                    if (!rows.next() || rows.getInt(1) != 1 || rows.next()) throw new ManagedProblem(INCOMPATIBLE_LAYOUT);
+                    if (!rows.next()) throw new ManagedProblem(INCOMPATIBLE_LAYOUT);
+                    version = rows.getInt(1);
+                    if ((version != 1 && version != 2) || rows.next()) throw new ManagedProblem(INCOMPATIBLE_LAYOUT);
                 }
                 try (var rows = statement.executeQuery("PRAGMA user_version")) {
-                    if (!rows.next() || rows.getInt(1) != 1) throw new ManagedProblem(INCOMPATIBLE_LAYOUT);
+                    if (!rows.next() || rows.getInt(1) != version) throw new ManagedProblem(INCOMPATIBLE_LAYOUT);
                 }
+                checkIntegrity(readOnly);
             } catch (SQLException failure) { throw new ManagedProblem(INCOMPATIBLE_LAYOUT); }
         } finally {
             // Only our fixed files within the newly allocated private snapshot are removed.
@@ -140,6 +147,47 @@ public final class ManagedStore implements AutoCloseable {
         } catch (IOException | SQLException failure) {
             connection.rollback(); throw failure;
         } finally { connection.setAutoCommit(true); }
+    }
+
+    /** SQLite's table-rebuild procedure, before runtime starts and while holding the directory lock.
+     * Disabling enforcement is confined to the schema transaction; all rows are checked before commit.
+     */
+    static void migrate(Connection connection) throws IOException, SQLException {
+        if (Sql.scalar(connection, "PRAGMA user_version") == 2) return;
+        if (Sql.scalar(connection, "PRAGMA user_version") != 1) throw new SQLException("Unsupported managed schema");
+        checkIntegrity(connection);
+        try (var statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=OFF"); }
+        connection.setAutoCommit(false);
+        try (var input = ManagedStore.class.getResourceAsStream("/db/managed/V002__binding_connections.sql")) {
+            if (input == null) throw new IOException("Managed migration resource unavailable");
+            // Preserve AUTOINCREMENT's high-water mark even if the highest event was previously removed.
+            long sequence = Sql.scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='inbound_event'");
+            for (String sql : new String(input.readAllBytes(), StandardCharsets.UTF_8).split(";")) {
+                if (!sql.isBlank()) try (var statement = connection.createStatement()) { statement.execute(sql); }
+            }
+            Sql.update(connection, "UPDATE sqlite_sequence SET seq=max(seq,?) WHERE name='inbound_event'", sequence);
+            Sql.update(connection, "INSERT INTO sqlite_sequence(name,seq) SELECT 'inbound_event',? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name='inbound_event')", sequence);
+            checkIntegrity(connection);
+            connection.commit();
+        } catch (IOException | SQLException | RuntimeException failure) {
+            connection.rollback(); throw failure;
+        } finally {
+            connection.setAutoCommit(true);
+            try (var statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
+        }
+        if (Sql.scalar(connection, "PRAGMA foreign_keys") != 1) throw new SQLException("Foreign keys not enabled");
+    }
+
+    private static void checkIntegrity(Connection connection) throws SQLException {
+        try (var statement = connection.createStatement()) {
+            try (var rows = statement.executeQuery("PRAGMA foreign_key_check")) {
+                if (rows.next()) throw new SQLException("Managed foreign key check failed");
+            }
+            try (var rows = statement.executeQuery("PRAGMA quick_check")) {
+                if (!rows.next() || !"ok".equals(rows.getString(1)) || rows.next())
+                    throw new SQLException("Managed integrity check failed");
+            }
+        }
     }
 
     @FunctionalInterface interface Work<T> { T run(Connection connection) throws SQLException; }

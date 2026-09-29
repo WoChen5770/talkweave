@@ -37,8 +37,8 @@
 | Scoped one time binding invitation / Separate simultaneous invitations | 合成通过 | BindingCoordinatorTest 独立任务/材料/激活；浏览器两个用户与两个标签页，任务 ID/图片独立 |
 | Scoped one time binding invitation / Refresh or cancel a QR code | 合成通过 | BindingCoordinatorTest.refreshedCancelledAndDisabledTasksDiscardLateNetworkResults / restartInvalidatesOldInvitationsAndCleansOnlyPrivateKnownFiles；浏览器刷新/取消；Node 过期与迟到图片测试 |
 | Scoped one time binding invitation / Pairing is required by WeChat | 合成通过 | BindingCoordinatorTest.pairingIsScopedSingleUseAndBoundToCurrentTask / repeatedPairingChallengeAllowsACorrectedCodeWithoutReusingTheOldOne；管理员 API 与浏览器提交测试 |
-| Verified scanner becomes the authorized owner / Automatically activate a verified scanner | 组件通过 / 真实待验 | ManagedRepositoryTest 的身份仅为合成 VerifiedIdentity；生产 resolver 关闭 |
-| Verified scanner becomes the authorized owner / Identity mapping is missing or unsupported | 合成通过 | ScannerIdentityResolverTest、BindingCoordinatorTest、AdminApiTest 与合成浏览器均验证 production resolver 失败关闭 |
+| Verified scanner becomes the authorized owner / Automatically activate a verified scanner | 组件通过 / 真实页面待验 | ScannerIdentityResolverTest 与 BindingCoordinatorTest 验证限定范围生产 resolver 自动激活、无首消息认领；双账号协议及重扫观察见 multi-user-protocol.md |
+| Verified scanner becomes the authorized owner / Identity mapping is missing or unsupported | 合成通过 | ScannerIdentityResolverTest、BindingCoordinatorTest、AdminApiTest 验证缺失身份/未知范围失败关闭 |
 | Verified scanner becomes the authorized owner / Another person sends the first message | 合成通过 | ScannerIdentityResolverTest；解析输入不接收入站消息；ManagedRepositoryTest 拒绝非授权 sender |
 | Unique and atomic user binding / Duplicate account across two user slots | 合成通过 | ManagedRepositoryTest.botAndGlobalAccountUniquenessAreBothEnforced / concurrentFinalizationCannotAssignTheSameAccountTwice |
 | Unique and atomic user binding / User disabled before confirmation | 合成通过 | ManagedRepositoryTest.refreshExpirationAndDisableInvalidateAttempts |

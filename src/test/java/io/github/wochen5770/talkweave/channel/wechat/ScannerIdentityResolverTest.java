@@ -31,9 +31,34 @@ class ScannerIdentityResolverTest {
     @Test void revisionAndSystemPropertiesCannotEnableAnUnverifiedProtocol() {
         var login = new WechatApiClient.LoginStatus(WechatApiClient.LoginPhase.CONFIRMED, null,
                 new WechatApiClient.Credentials("fake-bot", "fake-token", origin, "fake-scanner"));
-        for (String revision : new String[]{"2.4.9", "trusted", "verified", "synthetic"}) {
+        for (String revision : new String[]{"2.4.8", "2.4.10", "trusted", "verified", "synthetic"}) {
             assertThat(resolver.resolve(new LoginEvidence(login, revision)))
                     .isEqualTo(new Unverified(Reason.PROTOCOL_NOT_VERIFIED));
+        }
+    }
+
+    @Test void pinnedProtocolUsesConfirmedScannerWithoutWaitingForAnyMessage() {
+        for (String bot : new String[]{"fake-original-bot", "fake-renewed-bot"}) {
+            var login = new WechatApiClient.LoginStatus(WechatApiClient.LoginPhase.CONFIRMED, null,
+                    new WechatApiClient.Credentials(bot, "fake-token", origin, "fake-account"));
+            assertThat(resolver.resolve(new LoginEvidence(login, VERIFIED_PROTOCOL)))
+                    .isEqualTo(new VerifiedIdentity(ACCOUNT_NAMESPACE, "fake-account", bot, "fake-account", origin, EVIDENCE_REVISION));
+        }
+    }
+
+    @Test void pinnedRevisionDoesNotAuthorizeUnknownOriginsOrMalformedIdentities() {
+        for (String url : new String[]{"https://other.invalid", "http://ilinkai.weixin.qq.com",
+                "https://ilinkai.weixin.qq.com/other", "https://ilinkai.weixin.qq.com?x=1"}) {
+            var login = new WechatApiClient.LoginStatus(WechatApiClient.LoginPhase.CONFIRMED, null,
+                    new WechatApiClient.Credentials("fake-bot", "fake-token", URI.create(url), "fake-account"));
+            assertThat(resolver.resolve(new LoginEvidence(login, VERIFIED_PROTOCOL)))
+                    .isEqualTo(new Unverified(Reason.PROTOCOL_NOT_VERIFIED));
+        }
+        for (String scanner : new String[]{"fake-bot", " fake-account", "fake\naccount", "a".repeat(513)}) {
+            var login = new WechatApiClient.LoginStatus(WechatApiClient.LoginPhase.CONFIRMED, null,
+                    new WechatApiClient.Credentials("fake-bot", "fake-token", origin, scanner));
+            assertThat(resolver.resolve(new LoginEvidence(login, VERIFIED_PROTOCOL)))
+                    .isEqualTo(new Unverified(Reason.MISSING_LOGIN_IDENTITY));
         }
     }
 

@@ -157,7 +157,7 @@ class AdminApiTest {
                     return new io.github.wochen5770.talkweave.channel.wechat.WechatApiClient.LoginStatus(
                             io.github.wochen5770.talkweave.channel.wechat.WechatApiClient.LoginPhase.CONFIRMED, null,
                             new io.github.wochen5770.talkweave.channel.wechat.WechatApiClient.Credentials("bot-a", "secret-wechat-token",
-                                    io.github.wochen5770.talkweave.channel.wechat.WechatApiClient.LOGIN_ORIGIN, "scanner-a"));
+                                    io.github.wochen5770.talkweave.channel.wechat.WechatApiClient.LOGIN_ORIGIN, null));
                 }
                 return login.get();
             }
@@ -166,6 +166,7 @@ class AdminApiTest {
         };
         runner().withBean("syntheticBindingPorts", io.github.wochen5770.talkweave.managed.binding.BindingCoordinator.Ports.class,
                 () -> ports, definition -> definition.setPrimary(true)).run(context -> {
+            context.getBean(io.github.wochen5770.talkweave.managed.runtime.RuntimeManager.class).close();
             var client = new Browser(context); client.login(PASSWORD, 200);
             var users = context.getBean(ManagedUsers.class); var a = users.create("A"); var b = users.create("B");
             String base = "/api/admin/users/" + a.id() + "/binding-attempts";

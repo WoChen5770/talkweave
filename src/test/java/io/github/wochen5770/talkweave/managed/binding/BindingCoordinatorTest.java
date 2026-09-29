@@ -38,7 +38,7 @@ class BindingCoordinatorTest {
     @Test void productionConfirmedLoginNeverGuessesScannerIdentity() throws Exception {
         try (var f = new Fixture(false)) {
             var a = f.users.create("a"); var task = f.create(a); f.ready(task);
-            f.ports.getFirst().reply = confirmed("a"); f.phase(task, Phase.IDENTITY_UNVERIFIED);
+            f.ports.getFirst().reply = unsupported("a"); f.phase(task, Phase.IDENTITY_UNVERIFIED);
             rejected(ManagedProblem.Code.UNAUTHORIZED, () -> f.users.scope(a.id()));
             assertThat(f.activated).isEmpty();
             assertThat(f.coordinator.get(a.id(), task.id()).toString()).doesNotContain("secret-token", "sender-a", "scanner-a");
@@ -53,7 +53,7 @@ class BindingCoordinatorTest {
             rejected(ManagedProblem.Code.INVALID_INPUT, () -> f.coordinator.pair(a.id(), task.id(), "not-digits"));
             // The poll has completed before phase observation; a short retry may see the worker's finalizer.
             await(() -> { try { f.coordinator.pair(a.id(), task.id(), "123456"); return true; } catch (ManagedProblem busy) { return false; } });
-            port.reply = confirmed("a"); f.phase(task, Phase.IDENTITY_UNVERIFIED);
+            port.reply = unsupported("a"); f.phase(task, Phase.IDENTITY_UNVERIFIED);
             assertThat(port.codes).containsExactly("123456");
             rejected(ManagedProblem.Code.CONFLICT, () -> f.coordinator.pair(a.id(), task.id(), "654321"));
         }
@@ -67,7 +67,7 @@ class BindingCoordinatorTest {
             rejected(ManagedProblem.Code.CONFLICT, () -> f.coordinator.pair(a.id(), task.id(), "222222"));
             f.phase(task, Phase.NEED_PAIRING);
             await(() -> { try { f.coordinator.pair(a.id(), task.id(), "222222"); return true; } catch (ManagedProblem busy) { return false; } });
-            port.reply = confirmed("a"); f.phase(task, Phase.IDENTITY_UNVERIFIED);
+            port.reply = unsupported("a"); f.phase(task, Phase.IDENTITY_UNVERIFIED);
             assertThat(port.codes).containsExactly("111111", "222222");
         }
     }
@@ -179,6 +179,31 @@ class BindingCoordinatorTest {
         @Override public void close() { closed = true; }
     }
     static LoginStatus confirmed(String id) { return new LoginStatus(LoginPhase.CONFIRMED, null, new Credentials("bot-" + id, "secret-token-" + id, WechatApiClient.LOGIN_ORIGIN, "scanner-" + id)); }
+    static LoginStatus unsupported(String id) { return new LoginStatus(LoginPhase.CONFIRMED, null, new Credentials("bot-" + id, "secret-token-" + id, URI.create("https://unverified.invalid"), "scanner-" + id)); }
+
+    @Test void productionResolverActivatesAndReauthenticatesWithoutAnInboundClaim() throws Exception {
+        try (var f = new Fixture(false)) {
+            var a = f.users.create("a"); var b = f.users.create("b");
+            var aa = f.create(a); var bb = f.create(b); f.ready(aa); f.ready(bb);
+            f.ports.get(0).reply = confirmed("a"); f.ports.get(1).reply = confirmed("b");
+            f.phase(aa, Phase.SUCCEEDED); f.phase(bb, Phase.SUCCEEDED);
+            var old = f.users.scope(a.id()); var other = f.users.scope(b.id());
+            assertThat(old.senderId()).isEqualTo("scanner-a");
+            var chat = new ManagedConversations(f.store, clock, 100, 1000);
+            assertThat(chat.accept(old, new Updates(List.of(new Incoming("wrong-first", other.senderId(), "bad", "claim", false, 1, 2)), "", null))).isEmpty();
+            var retry = f.coordinator.create(a.id(), Mode.REAUTHENTICATE, old.authEpoch(), null, false); f.ready(retry);
+            f.ports.getLast().reply = new LoginStatus(LoginPhase.CONFIRMED, null,
+                    new Credentials("bot-new-a", "secret-new-a", LOGIN_ORIGIN, "scanner-a"));
+            f.phase(retry, Phase.SUCCEEDED);
+            var renewed = f.users.scope(a.id());
+            assertThat(renewed.bindingId()).isEqualTo(old.bindingId());
+            assertThat(renewed.botId()).isEqualTo("bot-new-a");
+            assertThat(renewed.generation()).isEqualTo(old.generation() + 1);
+            rejected(ManagedProblem.Code.UNAUTHORIZED, () -> f.users.connection(old));
+            assertThat(f.users.scope(b.id())).isEqualTo(other);
+            await(() -> f.activated.size() == 3);
+        }
+    }
     private static void await(java.util.function.BooleanSupplier done) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (!done.getAsBoolean()) { if (System.nanoTime() > deadline) throw new AssertionError("Synthetic task timed out"); Thread.sleep(10); }

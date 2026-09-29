@@ -48,9 +48,12 @@ public interface ScannerIdentityResolver {
         public Unverified { Objects.requireNonNull(reason); }
     }
 
-    /**
-     * No protocol revision has passed this change's two-account verification yet.
-     * There is intentionally no flag, property or "trust scanner" escape hatch.
+    String VERIFIED_PROTOCOL = "2.4.9";
+    String ACCOUNT_NAMESPACE = "weixin-ilink:ilinkai.weixin.qq.com:bot-type-3";
+    String EVIDENCE_REVISION = "tencent-24de5c9-20260929-two-account-relogin";
+
+    /** Pinned upstream login -> saved userId -> inbound allowFrom contract; see docs/multi-user-protocol.md.
+     * No inbound message, administrator override or synthetic revision can establish identity.
      */
     static ScannerIdentityResolver production() {
         return evidence -> {
@@ -63,9 +66,24 @@ public interface ScannerIdentityResolver {
                     || credentials.origin() == null || blank(credentials.scanUserId())) {
                 return new Unverified(Reason.MISSING_LOGIN_IDENTITY);
             }
-            return new Unverified(Reason.PROTOCOL_NOT_VERIFIED);
+            if (!VERIFIED_PROTOCOL.equals(evidence.protocolRevision())
+                    || !(URI.create("https://ilinkai.weixin.qq.com").equals(credentials.origin())
+                    || URI.create("https://ilinkai.weixin.qq.com/").equals(credentials.origin()))) {
+                return new Unverified(Reason.PROTOCOL_NOT_VERIFIED);
+            }
+            if (!validId(credentials.scanUserId()) || !validId(credentials.botId())
+                    || credentials.scanUserId().equals(credentials.botId())
+                    || credentials.token().chars().anyMatch(Character::isISOControl)) {
+                return new Unverified(Reason.MISSING_LOGIN_IDENTITY);
+            }
+            return new VerifiedIdentity(ACCOUNT_NAMESPACE, credentials.scanUserId(), credentials.botId(),
+                    credentials.scanUserId(), credentials.origin(), EVIDENCE_REVISION);
         };
     }
 
     private static boolean blank(String value) { return value == null || value.isBlank(); }
+    private static boolean validId(String value) {
+        return !blank(value) && value.length() <= 512 && value.equals(value.strip())
+                && value.chars().noneMatch(Character::isISOControl);
+    }
 }

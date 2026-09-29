@@ -90,6 +90,29 @@ class ManagedRepositoryTest {
         }
     }
 
+    @Test void sameAccountWithNewBotPreservesHistoryResetsCursorAndRevokesOldWork() {
+        try (var f = fixture()) {
+            var old = f.newBound("a"); var b = f.newBound("b");
+            var first = f.accept(old, "one", "keep-history"); f.deliver(old, "keep-answer");
+            f.chat.accept(old, new WechatApiClient.Updates(List.of(), "old-bot-cursor", null));
+            var pending = f.accept(old, "pending", "old-work"); f.chat.claim(old).orElseThrow();
+            var task = f.verifying(old.userId(), Mode.REAUTHENTICATE);
+            expect(CONFLICT, () -> f.users.activate(old.userId(), task.id(), identity("a", "b"), credentials("b")));
+            assertThat(f.users.scope(old.userId())).isEqualTo(old);
+            var renewed = f.users.activate(old.userId(), task.id(), identity("a", "new-a"), credentials("new-a"));
+            assertThat(renewed.bindingId()).isEqualTo(old.bindingId());
+            assertThat(renewed.botId()).isNotEqualTo(old.botId());
+            assertThat(renewed.generation()).isEqualTo(old.generation() + 1);
+            assertThat(f.users.connection(renewed).cursor()).isEmpty();
+            expect(UNAUTHORIZED, () -> f.users.connection(old));
+            expect(UNAUTHORIZED, () -> f.chat.saveReply(old, pending.sequence(), "late", true));
+            var next = f.accept(renewed, "one", "new-bot-message-id-can-repeat");
+            assertThat(next.conversationId()).isEqualTo(first.conversationId());
+            assertThat(f.chat.history(renewed, next.sequence())).extracting("text").containsExactly("keep-history", "keep-answer");
+            assertThat(f.users.scope(b.userId())).isEqualTo(b);
+        }
+    }
+
     @Test void historiesScopesAndDuplicateMessageIdsAreIsolated() {
         try (var f = fixture()) {
             var a = f.newBound("a"); var b = f.newBound("b");

@@ -138,17 +138,22 @@ public final class ManagedUsers {
                 ManagedConversations.invalidateWork(c, userId, clock.millis());
                 try (var s = prepare(c, "SELECT * FROM binding WHERE user_id=? AND active=1", userId); var r = s.executeQuery()) {
                     if (!r.next() || !identity.namespace().equals(r.getString("identity_namespace"))
-                            || !identity.accountId().equals(r.getString("account_id")) || !identity.botId().equals(r.getString("bot_id"))
+                            || !identity.accountId().equals(r.getString("account_id"))
                             || !identity.senderId().equals(r.getString("sender_id"))) throw new ManagedProblem(UNAUTHORIZED);
                     bindingId = r.getString("id");
                 }
-                update(c, "UPDATE binding SET origin=?,evidence_revision=? WHERE id=?", identity.origin().toString(), identity.evidenceRevision(), bindingId);
-                update(c, "UPDATE channel_session SET token=?,scan_user_id=?,generation=generation+1,active=1,updated_at=? WHERE binding_id=?", credentials.token(), credentials.scanUserId(), clock.millis(), bindingId);
+                // The verified account is stable across re-login, but WeChat may issue a new bot ID.
+                // Keep its history boundary; revoke old generation work and never reuse a bot's cursor.
+                boolean changedBot = scalar(c, "SELECT count(*) FROM binding WHERE id=? AND bot_id=?", bindingId, identity.botId()) == 0;
+                update(c, "INSERT INTO binding_connection(binding_id,user_id,bot_id,sender_id) VALUES (?,?,?,?) ON CONFLICT DO NOTHING", bindingId, userId, identity.botId(), identity.senderId());
+                update(c, "UPDATE binding SET bot_id=?,origin=?,evidence_revision=? WHERE id=?", identity.botId(), identity.origin().toString(), identity.evidenceRevision(), bindingId);
+                update(c, "UPDATE channel_session SET token=?,scan_user_id=?,cursor=CASE WHEN ? THEN '' ELSE cursor END,generation=generation+1,active=1,updated_at=? WHERE binding_id=?", credentials.token(), credentials.scanUserId(), changedBot ? 1 : 0, clock.millis(), bindingId);
             } else {
                 bindingId = UUID.randomUUID().toString();
                 long version = scalar(c, "SELECT COALESCE(max(version),0)+1 FROM binding WHERE user_id=?", userId);
                 update(c, "INSERT INTO binding(id,user_id,version,identity_namespace,account_id,bot_id,sender_id,origin,evidence_revision,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,1,?)",
                         bindingId, userId, version, identity.namespace(), identity.accountId(), identity.botId(), identity.senderId(), identity.origin().toString(), identity.evidenceRevision(), clock.millis());
+                update(c, "INSERT INTO binding_connection(binding_id,user_id,bot_id,sender_id) VALUES (?,?,?,?)", bindingId, userId, identity.botId(), identity.senderId());
                 update(c, "INSERT INTO channel_session(binding_id,user_id,token,scan_user_id,generation,active,updated_at) VALUES (?,?,?,?,1,1,?)", bindingId, userId, credentials.token(), credentials.scanUserId(), clock.millis());
             }
             update(c, "UPDATE binding_attempt SET phase='SUCCEEDED',completed_binding_id=? WHERE id=?", bindingId, attemptId);
