@@ -46,13 +46,13 @@ node --test src/test/js/binding-ui.test.cjs src/test/js/admin-details-ui.test.cj
 
 macOS 的默认临时目录可能经过 `/var` 符号链接，安全测试不会放宽这一检查。可在测试命令前设置 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp`；不要将真实数据放入临时目录。
 - ADMIN_ADDRESS=127.0.0.1（默认仅回环）
-- ADMIN_PORT=8080
+- ADMIN_PORT=8680
 
 ```shell
 java -jar target/talkweave-0.1.0-SNAPSHOT.jar
 ```
 
-访问 http://127.0.0.1:8080/ 。首次创建管理员后，从后续启动环境中移除初始密码；已持久化哈希不会被残留环境变量覆盖。不要把真实密码写进仓库、命令历史、截图或工单。
+访问 http://127.0.0.1:8680/ 。首次创建管理员后，从后续启动环境中移除初始密码；已持久化哈希不会被残留环境变量覆盖。不要把真实密码写进仓库、命令历史、截图或工单。
 
 预览入口只在 managed profile 下启用；旧单用户配置在该 profile 下不加载。当前默认启动和 Compose 尚未改为多用户，以免破坏已有部署。最终交付前需要移除这段过渡入口安排，不同时保留绕过管理授权的旧运行路径。
 
@@ -76,7 +76,7 @@ java -jar target/talkweave-0.1.0-SNAPSHOT.jar
 
 测试类 `ManagedBrowserFixture` 仅存在于 test-classes，必须从测试类路径显式运行其 main 方法；它启用专属 synthetic-browser-only 测试 profile，不会被普通 managed 测试启动加载，也不会打入正式 jar。它替换二维码与消息连接网络端口（消息端不产生入站事件且拒绝发送），**不替换生产身份解析器**。
 
-- 用全新测试目录和虚构管理员密码，监听回环端口，例如 18080。
+- 用全新测试目录和虚构管理员密码，监听回环端口，例如 18680。
 - 创建两个测试用户；二维码内容明确为 SYNTHETIC-ONLY-NOT-A-WECHAT-LOGIN，不是可登录二维码。
 - 合成状态自动进入配对挑战；输入虚构数字后模拟确认登录，生产解析器仍返回“无法确认身份，未授予权限”。
 - 验证两个标签页旧版本冲突、两个用户不同任务、刷新、取消、退出后认证失败、图片移除以及 HTML 备注按文本显示。

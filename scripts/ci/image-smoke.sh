@@ -43,9 +43,11 @@ for uid in 0 10001; do
   docker run --rm --platform "$platform" --network none --user 0:0 \
     --mount "type=volume,source=${data},target=/app/data" --entrypoint sh "$image" \
     -c "chown ${uid}:${uid} /app/data; chmod 700 /app/data"
+  # An empty named volume would be populated again from the image, resetting its owner to 10001.
+  # Preserve the explicitly prepared UID instead of relying on root capabilities to bypass it.
   managed=(--platform "$platform" --network none --read-only --user "${uid}:${uid}" --cap-drop ALL
     --security-opt no-new-privileges:true --tmpfs /tmp:rw,exec,nosuid,nodev,size=128m,mode=1777
-    --mount "type=volume,source=${data},target=/app/data")
+    --mount "type=volume,source=${data},target=/app/data,volume-nocopy")
   probe=(-Dorg.sqlite.tmpdir=/tmp -Dloader.main=io.github.wochen5770.talkweave.runtime.probe.ManagedContainerProbe
     -cp /app/assistant.jar org.springframework.boot.loader.launch.PropertiesLauncher)
   for mode in --write --verify; do

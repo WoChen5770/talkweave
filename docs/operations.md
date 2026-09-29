@@ -16,15 +16,15 @@
 
 ## 2. 受保护的管理入口
 
-默认只发布 `127.0.0.1:8080`，健康检查 8081 只在容器回环监听，不发布到宿主机。微信采用出站连接，不需要公网回调。
+默认只发布 `127.0.0.1:8680`，健康检查 8081 只在容器回环监听，不发布到宿主机。微信采用出站连接，不需要公网回调。
 
 可以从自己的电脑建立 SSH 隧道：
 
 ```sh
-ssh -N -L 18080:127.0.0.1:8080 NAS用户名@NAS地址
+ssh -N -L 18680:127.0.0.1:8680 NAS用户名@NAS地址
 ```
 
-然后浏览器访问 `http://127.0.0.1:18080`。也可将 `ADMIN_BIND_ADDRESS` 设为指定 NAS 内网地址，并通过受控 VPN/HTTPS 入口访问；不使用 `0.0.0.0` 或路由器公网转发作为默认部署。HTTPS 入口设置 `ADMIN_COOKIE_SECURE=true`，HTTP 隧道保持 false；入口应保持浏览器 Origin/Host 一致，不启用任意跨域或盲目信任代理头。
+然后浏览器访问 `http://127.0.0.1:18680`。也可将 `ADMIN_BIND_ADDRESS` 设为指定 NAS 内网地址，并通过受控 VPN/HTTPS 入口访问；不使用 `0.0.0.0` 或路由器公网转发作为默认部署。HTTPS 入口设置 `ADMIN_COOKIE_SECURE=true`，HTTP 隧道保持 false；入口应保持浏览器 Origin/Host 一致，不启用任意跨域或盲目信任代理头。
 
 首次登录成功后，从 `.env` 删除 `ADMIN_INIT_PASSWORD`（兼容旧预览变量 `ADMIN_INITIAL_PASSWORD` 也须移除），执行 `docker compose up -d --force-recreate` 清除容器的初始化秘密，再用原密码登录。管理员状态保存在私有数据库，残留初始化参数不会重置密码。不要分享 `docker compose config`、容器 inspect 或环境变量输出，其中可能有秘密。
 

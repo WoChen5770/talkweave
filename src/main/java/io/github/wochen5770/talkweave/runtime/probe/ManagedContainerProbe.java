@@ -18,7 +18,8 @@ public final class ManagedContainerProbe {
             else throw new IllegalArgumentException("Invalid probe arguments");
             System.out.println("CI_MANAGED_OK mode=" + args[0] + " externalCalls=0");
         } catch (Exception failure) {
-            System.err.println("CI_MANAGED_FAILED: inspect isolated fixture and configuration; no raw errors printed.");
+            String category = failure instanceof ManagedProblem problem ? problem.code().name() : failure.getClass().getSimpleName();
+            System.err.println("CI_MANAGED_FAILED category=" + category + ": inspect isolated fixture and configuration; no raw errors printed.");
             System.exit(1);
         }
     }
@@ -75,7 +76,7 @@ public final class ManagedContainerProbe {
         var json = new ObjectMapper();
         var cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         try (var client = HttpClient.newBuilder().cookieHandler(cookies).connectTimeout(Duration.ofSeconds(3)).build()) {
-            String origin = "http://127.0.0.1:8080";
+            String origin = "http://127.0.0.1:8680";
             var page = client.send(HttpRequest.newBuilder(URI.create(origin + "/")).timeout(Duration.ofSeconds(5)).build(), HttpResponse.BodyHandlers.ofString());
             if (page.statusCode() != 200 || !page.body().contains("html")) throw new IllegalStateException("Missing page");
             var anonymous = client.send(HttpRequest.newBuilder(URI.create(origin + "/api/admin/settings")).build(), HttpResponse.BodyHandlers.discarding());

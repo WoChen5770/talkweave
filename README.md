@@ -11,4 +11,4 @@ Java 21 / Spring Boot 单容器微信助手管理端：独立用户、会话空�
 - [本轮交付结果与未完成项](docs/managed-delivery-status.md)
 
 构建：`mvn verify`（Java 21）；前端逻辑回归：`node --test src/test/js/*.test.cjs`。
-默认镜像启动管理端，不要求外部模型配置文件；模型 Key 在受认证页面中设置。Compose 默认仅发布回环 8080，健康端口不公开。
+默认镜像启动管理端，不要求外部模型配置文件；模型 Key 在受认证页面中设置。Compose 默认仅发布回环 8680，健康端口不公开。

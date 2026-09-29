@@ -61,7 +61,7 @@ PR 构建不会上传供发布的镜像 tar，也不会产生 GHCR 发布 job。
 1. 按 [operations.md](operations.md) 准备独立 `data-multi-user` 本地磁盘目录，完成 UID/GID 授权，不挂载原旧数据。
 2. 将 `.env.example` 复制为 `.env`；`compose.yml` 已固定为 `ghcr.io/wochen5770/talkweave:latest`，如需固定版本或摘要直接修改 `image`。这里不存放模型密钥。
 3. 在私有 `.env` 中设置初始管理员凭据。无需外部模型配置文件；首次登录后在页面保存模型设置，再移除初始秘密并重建容器。
-4. 执行 `docker compose pull`，再执行 `docker compose up -d`。Compose 不在 NAS 构建镜像，默认仅发布回环 8080；Docker 从多架构 manifest 选择匹配镜像。
+4. 执行 `docker compose pull`，再执行 `docker compose up -d`。Compose 不在 NAS 构建镜像，默认仅发布回环 8680；Docker 从多架构 manifest 选择匹配镜像。
 5. 按 [operations.md](operations.md) 经 SSH/HTTPS/VPN 受保护入口登录。当前生产身份解析失败关闭，真实两账号验证与后续适配仍待完成；不要把扫码页面当作已通过的自动开通能力。
 
 **安全边界：** 活动数据目录必须是 NAS 本地磁盘，不使用 SMB/NFS。Compose 默认 root，可覆盖为目录所有者；镜像自身仍默认非 root。`/tmp` 允许 SQLite 原生库映射，仍限制 nosuid/nodev 和大小。示例不设置 stop_grace_period；8 秒完整收尾目标必须通过实际在途测试确认，不能用空闲启动/停止冒烟替代。
