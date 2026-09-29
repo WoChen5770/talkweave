@@ -32,7 +32,7 @@ assistant:
     max-pending-events: 1000
     min-free-bytes: 104857600
     busy-timeout: 5s
-  shutdown-grace: 20s
+  shutdown-grace: 8s
 logging:
   level:
     org.springframework.ai: OFF

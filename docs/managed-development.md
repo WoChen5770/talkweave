@@ -23,7 +23,7 @@
 ## 尚未完成的运行链路
 
 1. 已验证的生产扫码身份映射；目前生产 resolver 始终返回未验证，不存在绕过开关。
-2. 默认容器入口切换、受限端口、完整 8 秒退出预算与 root/non-root/双架构镜像验证。
+2. 默认容器入口和受限端口已切换；完整在途 8 秒退出预算与 root/non-root/双架构镜像实际验证待完成。
 3. 完整多账号浏览器开通/对话流程和 NAS 备份恢复验收。
 
 管理页面的“真实扫码授权尚未开放”是实际能力限制。运行链路已接入，但生产身份映射仍未通过验证。仅新增用户不会请求真实二维码，保存模型不会触发付费测试。**正式 managed 预览中点击“绑定微信”会向微信申请真实二维码，但因身份映射未验证，最终会拒绝授权；这不代表真实扫码开通已通过验收。** 日常开发请使用下面的合成入口，不要扫码试验真实账号。
@@ -37,12 +37,14 @@ mvn test package
 node --test src/test/js/binding-ui.test.cjs src/test/js/admin-details-ui.test.cjs
 ```
 
-设置当前进程环境变量，再显式启用 managed profile：
+设置当前进程环境变量；生产 main 自动启用 managed profile，合成浏览器入口仍显式指定：
 
 - SPRING_PROFILES_ACTIVE=managed
-- MANAGED_DATA_DIR=一个全新的本地目录（默认 ./data-managed）
-- ADMIN_INITIAL_USERNAME=自行选定的管理员名（未指定时为 admin）
-- ADMIN_INITIAL_PASSWORD=自行生成的强密码（12–72 个 UTF-8 字节，不含控制字符）
+- MANAGED_DATA_DIR=一个全新的本地目录（默认 ./data-multi-user）
+- ADMIN_INIT_USERNAME=自行选定的管理员名（未指定时为 admin）
+- ADMIN_INIT_PASSWORD=自行生成的强密码（12–72 个 UTF-8 字节，不含控制字符）
+
+macOS 的默认临时目录可能经过 `/var` 符号链接，安全测试不会放宽这一检查。可在测试命令前设置 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp`；不要将真实数据放入临时目录。
 - ADMIN_ADDRESS=127.0.0.1（默认仅回环）
 - ADMIN_PORT=8080
 

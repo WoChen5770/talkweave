@@ -19,8 +19,9 @@ RUN groupadd --gid 10001 assistant && useradd --uid 10001 --gid 10001 --no-creat
     && mkdir -p /app/data /app/config && chown 10001:10001 /app/data && chmod 700 /app/data
 COPY --from=build /build/target/talkweave-0.1.0-SNAPSHOT.jar /app/assistant.jar
 USER 10001:10001
-ENV ASSISTANT_DATA_DIR=/app/data HEALTH_PORT=8081
+ENV MANAGED_DATA_DIR=/app/data HEALTH_PORT=8081 ADMIN_ADDRESS=0.0.0.0
+EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD ["java", "-Dloader.main=io.github.wochen5770.talkweave.runtime.HealthCheck", "-cp", "/app/assistant.jar", "org.springframework.boot.loader.launch.PropertiesLauncher"]
 ENTRYPOINT ["java", "-Djava.awt.headless=true", "-Dorg.sqlite.tmpdir=/tmp", "-jar", "/app/assistant.jar"]
-CMD ["--spring.config.additional-location=file:/app/config/application.yml"]
+CMD ["--spring.config.additional-location=optional:file:/app/config/application.yml"]

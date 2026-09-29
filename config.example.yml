@@ -23,3 +23,4 @@ assistant:
     directory: ${ASSISTANT_DATA_DIR:./data}
     max-pending-events: 1000
     min-free-bytes: 104857600
+# Legacy single-user example only; current managed deployment uses the authenticated settings page.

@@ -20,6 +20,8 @@ public final class AdminIdentity implements AuthenticationProvider {
         this.settings = settings;
         this.passwords = passwords;
         this.dummyHash = passwords.encode(UUID.randomUUID().toString());
+        if (settings.administrator().isEmpty() && (initialPassword == null || initialPassword.isEmpty()))
+            throw new ConfigurationProblem("managed.bootstrap-password", "set ADMIN_INIT_PASSWORD for first administrator initialization");
         if (settings.administrator().isEmpty() && initialPassword != null && !initialPassword.isEmpty()) {
             int bytes = initialPassword.getBytes(StandardCharsets.UTF_8).length;
             if (bytes < 12 || bytes > 72 || initialPassword.chars().anyMatch(Character::isISOControl))

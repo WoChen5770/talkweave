@@ -1,28 +1,26 @@
 services:
   assistant:
     image: ghcr.io/wochen5770/talkweave:latest
-    user: "${ASSISTANT_UID:-10001}:${ASSISTANT_GID:-10001}"
+    user: "${ASSISTANT_UID:-0}:${ASSISTANT_GID:-0}"
     restart: unless-stopped
-    stop_grace_period: 25s
-    command: ["--spring.config.additional-location=file:/app/config/application.yml", "--assistant.shutdown-grace=20s", "--spring.lifecycle.timeout-per-shutdown-phase=25s"]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     tmpfs:
       - /tmp:rw,exec,nosuid,nodev,size=128m,mode=1777
     environment:
-      ASSISTANT_DATA_DIR: /app/data
+      MANAGED_DATA_DIR: /app/data
+      ADMIN_ADDRESS: 0.0.0.0
+      ADMIN_INIT_USERNAME: ${ADMIN_INIT_USERNAME:-admin}
+      ADMIN_INIT_PASSWORD: ${ADMIN_INIT_PASSWORD:-}
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
       HEALTH_PORT: "8081"
+    ports:
+      - "${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-8080}:8080"
     volumes:
       - type: bind
-        source: ${ASSISTANT_HOST_DATA:-./data}
+        source: ${ASSISTANT_HOST_DATA:-./data-multi-user}
         target: /app/data
         bind:
           create_host_path: false
-      - type: bind
-        source: ${ASSISTANT_CONFIG:-./config/application.yml}
-        target: /app/config/application.yml
-        read_only: true
-        bind:
-          create_host_path: false
-    # No published ports; health checks run against container-local loopback.
+    # Health port 8081 stays on container-local loopback; never publish it.

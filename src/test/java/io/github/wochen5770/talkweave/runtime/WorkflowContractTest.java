@@ -75,15 +75,19 @@ class WorkflowContractTest {
         assertThat(smoke).contains("--network none", "--read-only", "--write --verify", "--mount", "--entrypoint java", "ContainerStorageProbe")
                 .doesNotContain("MODEL_API_KEY", "WECHAT_BOT_ID", "config/application.yml", "\r");
         var service = map(map(yaml("compose.yml").get("services")).get("assistant"));
-        assertThat(service).doesNotContainKeys("ports", "build");
+        assertThat(service).doesNotContainKeys("build", "stop_grace_period", "command", "privileged");
         assertThat(service).containsEntry("image", "ghcr.io/wochen5770/talkweave:latest");
-        assertThat(service).containsEntry("read_only", true).containsEntry("stop_grace_period", "25s");
-        assertThat(service.get("command").toString()).contains("--assistant.shutdown-grace=20s");
+        assertThat(service).containsEntry("read_only", true).containsEntry("user", "${ASSISTANT_UID:-0}:${ASSISTANT_GID:-0}");
+        assertThat((List<String>) service.get("ports")).containsExactly("${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-8080}:8080");
+        assertThat(service.get("volumes").toString()).contains("./data-multi-user").doesNotContain("application.yml", "docker.sock");
+        assertThat(map(service.get("environment"))).containsEntry("MANAGED_DATA_DIR", "/app/data");
+        assertThat(smoke).contains("ManagedContainerProbe", "--user", "--web", "docker stop");
         String ignore = Files.readString(Path.of(".dockerignore"));
         assertThat(ignore).contains("**\n", "!src/**", "!.github/workflows/container.yml")
                 .doesNotContain("!config", "!data", "!.env", "!.build-cache");
         String docker = Files.readString(Path.of("Dockerfile"));
         assertThat(docker).contains("USER 10001:10001", "COPY --from=build", "FROM ${RUNTIME_IMAGE}");
+        assertThat(docker).contains("optional:file:/app/config/application.yml", "ADMIN_ADDRESS=0.0.0.0");
         assertThat(docker.substring(docker.indexOf("FROM ${RUNTIME_IMAGE}"))).doesNotContain("COPY src", "COPY config", "COPY data");
     }
 }

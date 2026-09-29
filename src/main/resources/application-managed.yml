@@ -1,5 +1,7 @@
-# Development entry point while the multi-user runtime is being implemented.
+# Managed production entry point; real scanner authorization remains evidence-gated.
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 1s
   main:
     web-application-type: servlet
   web:
@@ -32,6 +34,6 @@ assistant:
   enabled: false
 managed:
   health-port: ${HEALTH_PORT:8081}
-  directory: ${MANAGED_DATA_DIR:./data-managed}
-  bootstrap-username: ${ADMIN_INITIAL_USERNAME:admin}
-  bootstrap-password: ${ADMIN_INITIAL_PASSWORD:}
+  directory: ${MANAGED_DATA_DIR:./data-multi-user}
+  bootstrap-username: ${ADMIN_INIT_USERNAME:${ADMIN_INITIAL_USERNAME:admin}}
+  bootstrap-password: ${ADMIN_INIT_PASSWORD:${ADMIN_INITIAL_PASSWORD:}}

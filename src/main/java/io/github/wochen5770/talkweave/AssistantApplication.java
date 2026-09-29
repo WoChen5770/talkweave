@@ -6,6 +6,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @SpringBootApplication
 public class AssistantApplication {
     public static void main(String[] args) {
-        SpringApplication.run(AssistantApplication.class, args);
+        var application = new SpringApplication(AssistantApplication.class);
+        // The production entry point cannot re-enable the legacy file-based authorization path.
+        application.setAdditionalProfiles("managed");
+        application.run(args);
     }
 }

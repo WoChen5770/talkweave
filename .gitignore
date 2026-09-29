@@ -4,6 +4,7 @@
 *.iml
 /data/
 /data-managed/
+/data-multi-user/
 /config/
 .env
 .env.*

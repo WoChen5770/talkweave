@@ -20,7 +20,7 @@ public class ManagedAdminConfiguration {
     }
     @Bean Clock managedClock() { return Clock.systemUTC(); }
     @Bean(destroyMethod = "close") ManagedStore managedStore(Environment env) {
-        return ManagedStore.open(Path.of(env.getProperty("managed.directory", "./data-managed")));
+        return ManagedStore.open(Path.of(env.getProperty("managed.directory", "./data-multi-user")));
     }
     @Bean RuntimeLimits runtimeLimits(Environment env) {
         var d = RuntimeLimits.defaults();
@@ -45,7 +45,7 @@ public class ManagedAdminConfiguration {
     RuntimeManager runtimeManager(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations,
                                   ManagedUsage usage, RuntimeLimits limits, ChannelRuntime.Ports ports, ManagedModelPool models, Environment env) {
         return new RuntimeManager(users, settings, conversations, usage, limits, ports, models,
-                RuntimeManager.diskSpace(Path.of(env.getProperty("managed.directory", "./data-managed"))));
+                RuntimeManager.diskSpace(Path.of(env.getProperty("managed.directory", "./data-multi-user"))));
     }
     @Bean(initMethod = "start", destroyMethod = "close")
     io.github.wochen5770.talkweave.runtime.HealthServer managedHealth(RuntimeManager runtime, Environment env) throws java.io.IOException {
@@ -58,7 +58,7 @@ public class ManagedAdminConfiguration {
     @Bean ManagedAudit managedAudit(ManagedStore store, Clock clock) { return new ManagedAudit(store, clock); }
     @Bean io.github.wochen5770.talkweave.managed.binding.BindingMaterials bindingMaterials(ManagedStore store, Environment env) {
         // ManagedStore has validated the layout before any login-material directory is written.
-        return new io.github.wochen5770.talkweave.managed.binding.BindingMaterials(Path.of(env.getProperty("managed.directory", "./data-managed")));
+        return new io.github.wochen5770.talkweave.managed.binding.BindingMaterials(Path.of(env.getProperty("managed.directory", "./data-multi-user")));
     }
     @Bean io.github.wochen5770.talkweave.managed.binding.BindingCoordinator.Ports bindingPorts(Environment env) {
         var hosts = org.springframework.boot.context.properties.bind.Binder.get(env)

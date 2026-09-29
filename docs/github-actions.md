@@ -34,7 +34,7 @@ ghcr.io/wochen5770/talkweave
 
 1. **verify**：拒绝已跟踪的私有运行目录/数据库，执行 actionlint、Bash 语法检查和 Maven 单元/契约测试；无真实 API 调用。
 2. **build**：两个矩阵任务分别构建 amd64、arm64。基础镜像标签在每次 CI 中先解析到摘要，并以摘要作为 Docker build 参数；记录基础镜像及执行环境。
-3. **目标镜像冒烟**：amd64 为原生 CI，arm64 在 amd64 runner 上通过 QEMU 执行。使用镜像内的 Java 和 SQLite 原生库、非 root 用户、只读根文件系统和临时数据卷，且 `--network none`。第一个容器写入合成会话/回复/游标，删除容器后第二个容器复用该卷并验证历史与当前会话。不会挂载 NAS 数据或真实配置。
+3. **目标镜像冒烟**：amd64 为原生 CI，arm64 在 amd64 runner 上通过 QEMU 执行。保留旧存储回归，并在独立临时卷中分别以 `0:0`、`10001:10001` 检查多用户数据库/用户/设置持久化及私有权限。容器使用只读根文件系统与 `--network none`，验证真实 Web 启动、合成管理员登录、无模型设置页、内部健康、默认停止时间及移除初始化秘密后的重建登录。不会挂载 NAS 数据或真实配置；这一烟测不覆盖真实账号或模型在途停机验收。
 4. **publish-images**：必须等两个 build 任务都成功。下载已测试镜像 tar、校验 SHA-256、加载并推送到唯一运行标签；不会另行从源码重建一个“未经冒烟检查”的镜像。
 5. **publish-manifest**：使用两份已推送镜像的精确摘要创建多架构正式标签，校验包含且仅包含 `linux/amd64` 与 `linux/arm64`，输出摘要和验证方式到 Actions Summary。
 
@@ -56,22 +56,23 @@ PR 构建不会上传供发布的镜像 tar，也不会产生 GHCR 发布 job。
 
 首次 GHCR 包可能是私有的：公开仓库也不要假定镜像自动公开。你可自行将包设为 Public，或在 NAS 使用仅具 `read:packages` 权限的凭据登录 GHCR；不要使用模型 API Key 登录。CI 发布无需你创建该凭据。
 
-把 `compose.yml`、`.env.example` 和 `config.example.yml` 下载到 NAS 部署目录：
+把同一已验证提交的 `compose.yml`、`.env.example` 下载到新的 NAS 部署目录：
 
-1. 按 [operations.md](operations.md) 准备本地磁盘数据目录和私有配置，完成 UID/GID 授权。
+1. 按 [operations.md](operations.md) 准备独立 `data-multi-user` 本地磁盘目录，完成 UID/GID 授权，不挂载原旧数据。
 2. 将 `.env.example` 复制为 `.env`；`compose.yml` 已固定为 `ghcr.io/wochen5770/talkweave:latest`，如需固定版本或摘要直接修改 `image`。这里不存放模型密钥。
-3. 将 `config.example.yml` 复制为 `config/application.yml`，在 NAS 本地填写模型配置；第一次绑定时 bot-id/owner-id 同时留空。
-4. 执行 `docker compose pull`，再执行 `docker compose up -d`。Compose 不在 NAS 构建镜像，不映射公开端口；Docker 会从多架构 manifest 选择匹配的运行镜像。
-5. 按 [operations.md](operations.md) 完成二维码、配对和人工身份绑定。正式启动会产生真实微信连接，绑定后模型请求可能计费。
+3. 在私有 `.env` 中设置初始管理员凭据。无需外部模型配置文件；首次登录后在页面保存模型设置，再移除初始秘密并重建容器。
+4. 执行 `docker compose pull`，再执行 `docker compose up -d`。Compose 不在 NAS 构建镜像，默认仅发布回环 8080；Docker 从多架构 manifest 选择匹配镜像。
+5. 按 [operations.md](operations.md) 经 SSH/HTTPS/VPN 受保护入口登录。当前生产身份解析失败关闭，真实两账号验证与后续适配仍待完成；不要把扫码页面当作已通过的自动开通能力。
 
-**安全边界：** `.env` 指向的活动数据目录必须是 NAS 本地磁盘，不使用 SMB/NFS；配置只读挂载，运行账号非 root。`/tmp` 仅用于 JVM/SQLite 临时文件，显式允许 executable mapping 以加载 SQLite 原生库，仍设有 nosuid/nodev 和大小限制。应用宽限期固定 20 秒，Docker 预留 25 秒。
+**安全边界：** 活动数据目录必须是 NAS 本地磁盘，不使用 SMB/NFS。Compose 默认 root，可覆盖为目录所有者；镜像自身仍默认非 root。`/tmp` 允许 SQLite 原生库映射，仍限制 nosuid/nodev 和大小。示例不设置 stop_grace_period；8 秒完整收尾目标必须通过实际在途测试确认，不能用空闲启动/停止冒烟替代。
 
 ## 6. 由你完成的 NAS 验收清单
 
 请记录镜像标签/manifest 摘要、NAS 架构、日期和结论，不需要提交 API Key、token、配对码、身份 ID 或聊天正文。
 
 - [ ] NAS 正确选择 amd64/arm64，实际 Java/SQLite 启动正常。
-- [ ] 首次目录授权、只读配置、扫码/配对及本人身份核对完成。
+- [ ] 独立目录授权、管理员初始化与秘密移除、受保护页面登录完成。
+- [ ] 两账号协议依据、独立收发及明确授权的重扫验证通过，再实现生产身份适配。
 - [ ] 两轮真实模型对话上下文正确；`/new` 清除后续上下文但保留旧记录。
 - [ ] 非文字消息只给能力提示，不调用媒体能力或工具。
 - [ ] 重新创建容器保留当前会话/聊天/游标；不会重复模型调用或重复发送。
@@ -80,4 +81,4 @@ PR 构建不会上传供发布的镜像 tar，也不会产生 GHCR 发布 job。
 - [ ] 停止中的未完成请求有可解释的中断/不确定状态，不自动重放。
 - [ ] 停止实例的一致性备份、兼容版本恢复、迁移失败回滚和旧备份未完成轮次核对已演练。
 
-CI 通过后更新 OpenSpec 2.6 的实际结果；NAS 验收和运维演练完成后再确认 7.4/7.5/8.4。未执行的项保持待确认，不影响你先拿到代码和 CI 工作流。
+CI 通过后记录当前多用户 change 的 10.4 结果；真实协议验证对应 1.4/1.5/4.4，NAS 验收对应 10.5。未执行项保持未完成，不以旧单用户 change 的任务编号代替当前验收。

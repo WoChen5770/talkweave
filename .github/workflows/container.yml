@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          private=$(git ls-files -- data/ config/ .env '.env.*' '*.sqlite' '*.sqlite-*' '*.db' '*.db-*')
+          private=$(git ls-files -- data/ data-managed/ data-multi-user/ config/ .env '.env.*' '*.sqlite' '*.sqlite-*' '*.db' '*.db-*')
           private=$(printf '%s\n' "$private" | grep -Fvx '.env.example' || true)
           if [[ -n "$private" ]]; then
             echo 'Private runtime data/configuration is tracked. Remove it from Git before building.' >&2
@@ -66,6 +66,8 @@ jobs:
           bash -n scripts/ci/image-smoke.sh
       - name: Test and package (synthetic services only)
         run: mvn -B -Dstyle.color=never verify
+      - name: Test management UI logic (synthetic DOM only)
+        run: node --test src/test/js/*.test.cjs
       - name: Keep test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

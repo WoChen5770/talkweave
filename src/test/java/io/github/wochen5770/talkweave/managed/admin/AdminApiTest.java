@@ -48,8 +48,9 @@ class AdminApiTest {
     }
     @Test void absentBootstrapDoesNotOpenAccessAndResidualValuesCannotResetPassword() {
         runner().withPropertyValues("managed.bootstrap-password=").run(context -> {
-            assertThat(context.getBean(ManagedSettings.class).administrator()).isEmpty();
-            new Browser(context).login(PASSWORD, 401);
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure()).hasRootCauseInstanceOf(io.github.wochen5770.talkweave.runtime.ConfigurationProblem.class)
+                    .hasStackTraceContaining("ADMIN_INIT_PASSWORD");
         });
         runner().run(context -> new Browser(context).login(PASSWORD, 200));
         runner().withPropertyValues("managed.bootstrap-password=another-valid-password", "managed.bootstrap-username=intruder").run(context -> {
