@@ -1,19 +1,19 @@
-# GitHub Actions / GHCR 使用说明
+# Talkweave：GitHub Actions / GHCR 使用说明
 
 ## 分工与当前状态
 
 - 项目交付 Dockerfile、Actions、合成测试和部署说明；你负责提交到 GitHub、NAS 部署与真实验收。
-- 当前工作流经过本地 actionlint 与契约测试，但**尚未在你的 GitHub 仓库运行**，没有声称镜像已生成/发布，也未启动你的微信或调用实际模型。
+- 当前工作流经过本地 actionlint 与契约测试；是否构建、发布成功仍以当前提交的 GitHub Actions 运行结果为准。本地测试未启动微信或调用实际模型。
 - 不需要在开发机安装或启动 Docker，不需要提供 NAS 账号给开发代理。
 
 ## 1. 提交仓库
 
 将源码提交到 GitHub，保留 `.github/workflows/container.yml`、`scripts/ci/`、Dockerfile 和 `pom.xml`。不要使用强制添加命令提交被忽略的 `config/`、`data/`、`.env`、本机缓存、数据库或真实联调材料。
 
-工作流自动使用小写仓库名生成镜像路径；仓库名末尾的 `-` 会去掉，因为 Docker 镜像仓库名不能以 `-` 结尾：
+工作流自动使用小写仓库名生成镜像路径；如果仓库名末尾有 `-`，会去掉以符合 Docker 镜像命名规则：
 
 ```text
-ghcr.io/wochen5770/multi-agent
+ghcr.io/wochen5770/talkweave
 ```
 
 发布仅使用 GitHub 自动提供的短期 `GITHUB_TOKEN`，不需要 Docker Hub 账号、GHCR PAT 或任何模型/微信 Secret。组织策略须允许工作流发布 Packages；构建 job 只有 `contents: read`，只有发布 job 获得 `packages: write`。所有外部 Actions 都固定到提交 SHA，版本号写在行尾注释。首次创建包时会写入源仓库 OCI label，便于关联权限。
@@ -59,7 +59,7 @@ PR 构建不会上传供发布的镜像 tar，也不会产生 GHCR 发布 job。
 把 `compose.yml`、`.env.example` 和 `config.example.yml` 下载到 NAS 部署目录：
 
 1. 按 [operations.md](operations.md) 准备本地磁盘数据目录和私有配置，完成 UID/GID 授权。
-2. 将 `.env.example` 复制为 `.env`，把 `ASSISTANT_IMAGE` 改为你的实际 GHCR 标签或摘要。这里不存放模型密钥。
+2. 将 `.env.example` 复制为 `.env`；`compose.yml` 已固定为 `ghcr.io/wochen5770/talkweave:latest`，如需固定版本或摘要直接修改 `image`。这里不存放模型密钥。
 3. 将 `config.example.yml` 复制为 `config/application.yml`，在 NAS 本地填写模型配置；第一次绑定时 bot-id/owner-id 同时留空。
 4. 执行 `docker compose pull`，再执行 `docker compose up -d`。Compose 不在 NAS 构建镜像，不映射公开端口；Docker 会从多架构 manifest 选择匹配的运行镜像。
 5. 按 [operations.md](operations.md) 完成二维码、配对和人工身份绑定。正式启动会产生真实微信连接，绑定后模型请求可能计费。

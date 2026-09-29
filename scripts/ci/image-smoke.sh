@@ -20,7 +20,7 @@ docker run "${common[@]}" --entrypoint sh "$image" -c 'id; test "$(id -u)" -ne 0
 # Two fresh containers reuse only the temporary volume. No real configuration or network is provided.
 for mode in --write --verify; do
   docker run "${common[@]}" --entrypoint java "$image" \
-    -Dorg.sqlite.tmpdir=/tmp -Dloader.main=io.github.personalassistant.runtime.probe.ContainerStorageProbe \
+    -Dorg.sqlite.tmpdir=/tmp -Dloader.main=io.github.wochen5770.talkweave.runtime.probe.ContainerStorageProbe \
     -cp /app/assistant.jar org.springframework.boot.loader.launch.PropertiesLauncher \
     "$mode" /app/data/ci-fixture "$arch" | tee "$evidence/storage-${mode#--}.txt"
 done

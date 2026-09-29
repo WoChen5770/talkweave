@@ -4,7 +4,7 @@
 
 本轮命令：`mvn -o -s .build-cache/maven-settings.xml -gs .build-cache/maven-settings.xml -B -Dstyle.color=never verify`。结果 **129 tests，0 failures，0 errors，1 skipped**；输出 Spring Boot JAR。Windows ACL 测试经授权在沙箱外执行。原生符号链接测试因 Windows 平台跳过，Mockito 拒绝分支测试通过；Jimfs 依赖下载失败后未保留该依赖，也未把模拟称为原生实测。
 
-另执行 `docker compose --env-file .env.example -f compose.yml config --quiet` 成功；它不构建或运行容器。双平台验证由 GitHub Actions 执行，尚待操作者提交后触发；NAS 验收由操作者自行完成。本机 Docker 状态不阻塞开发。测试类位于 `src/test/java/io/github/personalassistant/` 对应职责包；JUnit 明细在本机 `target/surefire-reports/`，不提交测试生成物。
+另执行 `docker compose --env-file .env.example -f compose.yml config --quiet` 成功；它不构建或运行容器。双平台验证由 GitHub Actions 执行，是否通过以当前提交的运行结果为准；NAS 验收由操作者自行完成。本机 Docker 状态不阻塞开发。测试类位于 `src/test/java/io/github/wochen5770/talkweave/` 对应职责包；JUnit 明细在本机 `target/surefire-reports/`，不提交测试生成物。
 
 ## compatible-chat-model
 

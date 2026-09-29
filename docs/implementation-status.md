@@ -27,7 +27,7 @@ OpenSpec change：`add-personal-wechat-chat-assistant`，**31/38** 完成。本�
 - SHA 固定的外部 Actions：通过官方仓库 `git ls-remote` 核实版本标签对应提交；没有使用浮动 Action 引用。
 - 每架构先解析基础镜像摘要，再构建/加载；arm64 明确 QEMU on amd64。`image-smoke.sh` 非 root、无网络、只读根目录，两个新容器复用临时卷核对 Java/SQLite 会话与历史。
 - 发布仅加载已验证 tar（SHA-256 校验），不重新构建；两架构通过后发布多架构正式标签，保留测试/平台/manifest 证据。
-- Compose 已改为只拉取 `ASSISTANT_IMAGE` 指定的 GHCR 镜像，提供 `.env.example`；不在 NAS 构建，不写入任何真实值。README、operations、github-actions 和 container-validation 文档同步。
+- Compose 已改为只拉取固定的 `ghcr.io/wochen5770/talkweave:latest` 镜像，提供 `.env.example`；不在 NAS 构建，不写入任何真实值。README、operations、github-actions 和 container-validation 文档同步。
 - 这只是本地实现/验证完成，**没有提交到 GitHub、运行远程 Actions、构建/发布镜像或访问 NAS**。
 
 ## 本轮实际验证

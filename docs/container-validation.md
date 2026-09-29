@@ -21,7 +21,7 @@ Dockerfile 的构建标签默认 `maven:3.9.8-eclipse-temurin-21`，运行标签
 
 ## Compose 和可选本地构建
 
-NAS 使用 `.env` 中的 `ASSISTANT_IMAGE=ghcr.io/<owner>/<repo>:<tag>` 或 `@sha256:<digest>`，执行 `docker compose pull` / `docker compose up -d`。Compose 不含 build 项，不会在 NAS 下载 Maven 构建源码；缺少镜像变量会明确报错。启动是真实外部连接操作，请先准备私有配置与身份核对。
+NAS 的 Compose 示例固定使用 `ghcr.io/wochen5770/talkweave:latest`，执行 `docker compose pull` / `docker compose up -d`。Compose 不含 build 项，不会在 NAS 下载 Maven 构建源码；如需固定版本或镜像摘要，可直接修改 `compose.yml` 的 `image`。启动是真实外部连接操作，请先准备私有配置与身份核对。
 
 若未来自行在开发机测试，仍可使用同一 Dockerfile（不是前置要求）：
 

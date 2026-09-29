@@ -1,6 +1,6 @@
 services:
   assistant:
-    image: ${ASSISTANT_IMAGE:?Set ASSISTANT_IMAGE to your GHCR image tag or digest}
+    image: ghcr.io/wochen5770/talkweave:latest
     user: "${ASSISTANT_UID:-10001}:${ASSISTANT_GID:-10001}"
     restart: unless-stopped
     stop_grace_period: 25s

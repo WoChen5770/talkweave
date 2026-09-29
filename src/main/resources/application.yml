@@ -1,6 +1,6 @@
 spring:
   application:
-    name: personal-wechat-chat-assistant
+    name: talkweave
   main:
     web-application-type: none
     banner-mode: off
