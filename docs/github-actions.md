@@ -10,10 +10,10 @@
 
 将源码提交到 GitHub，保留 `.github/workflows/container.yml`、`scripts/ci/`、Dockerfile 和 `pom.xml`。不要使用强制添加命令提交被忽略的 `config/`、`data/`、`.env`、本机缓存、数据库或真实联调材料。
 
-工作流自动使用仓库名生成小写镜像路径：
+工作流自动使用小写仓库名生成镜像路径；仓库名末尾的 `-` 会去掉，因为 Docker 镜像仓库名不能以 `-` 结尾：
 
 ```text
-ghcr.io/<github-owner>/<repository>
+ghcr.io/wochen5770/multi-agent
 ```
 
 发布仅使用 GitHub 自动提供的短期 `GITHUB_TOKEN`，不需要 Docker Hub 账号、GHCR PAT 或任何模型/微信 Secret。组织策略须允许工作流发布 Packages；构建 job 只有 `contents: read`，只有发布 job 获得 `packages: write`。所有外部 Actions 都固定到提交 SHA，版本号写在行尾注释。首次创建包时会写入源仓库 OCI label，便于关联权限。

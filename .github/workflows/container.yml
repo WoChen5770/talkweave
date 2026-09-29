@@ -47,7 +47,9 @@ jobs:
           if [[ "$REQUEST_PUBLISH" == true && ( "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" || "$GITHUB_REF" == refs/tags/v* ) ]]; then
             publish=true
           fi
-          printf 'publish=%s\nimage=ghcr.io/%s\n' "$publish" "${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          image_repository="${GITHUB_REPOSITORY,,}"
+          image_repository="${image_repository%-}"
+          printf 'publish=%s\nimage=ghcr.io/%s\n' "$publish" "$image_repository" >> "$GITHUB_OUTPUT"
       - name: Reject tracked private runtime data
         shell: bash
         run: |
