@@ -1,0 +1,14 @@
+/target/
+/.build-cache/
+/.idea/
+*.iml
+/data/
+/config/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.log

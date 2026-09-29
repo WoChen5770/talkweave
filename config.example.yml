@@ -1,0 +1,25 @@
+# Copy to config/application.yml (ignored by version control). Do not commit real keys.
+assistant:
+  enabled: true # Starts outbound WeChat connections. false = storage/configuration check only.
+  health-port: 8081 # Container-local loopback only.
+  shutdown-grace: 20s # Compose reserves 25s; keep at least 5s extra for teardown.
+  model:
+    api-base-url: ${MODEL_API_BASE_URL:}
+    api-key: ${MODEL_API_KEY:}
+    name: ${MODEL_NAME:}
+    context-capacity: 8192
+    output-budget: 1024
+    safety-margin: 512
+    history-rounds: 20
+    request-timeout: 60s
+    total-time-budget: 90s
+    max-retries: 2
+    allow-insecure-local-http: false
+  wechat:
+    trusted-hosts: [ilinkai.weixin.qq.com] # Exact approved hosts, not a wildcard.
+    bot-id: ${WECHAT_BOT_ID:}
+    owner-id: ${WECHAT_OWNER_ID:}
+  storage:
+    directory: ${ASSISTANT_DATA_DIR:./data}
+    max-pending-events: 1000
+    min-free-bytes: 104857600

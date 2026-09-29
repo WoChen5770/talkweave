@@ -1,0 +1,7 @@
+<configuration>
+    <turboFilter class="io.github.personalassistant.runtime.SensitiveLibraryLogFilter"/>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder><pattern>%d{HH:mm:ss.SSS} %-5level %logger{48} - %msg%n</pattern></encoder>
+    </appender>
+    <root level="INFO"><appender-ref ref="CONSOLE"/></root>
+</configuration>

@@ -1,0 +1,265 @@
+name: Verify and publish container
+
+'on':
+  pull_request:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to GHCR (default branch or v* tag only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      publish: ${{ steps.target.outputs.publish }}
+      image: ${{ steps.target.outputs.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Resolve publication policy
+        id: target
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REQUEST_PUBLISH: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+        run: |
+          set -euo pipefail
+          publish=false
+          if [[ "$REQUEST_PUBLISH" == true && ( "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" || "$GITHUB_REF" == refs/tags/v* ) ]]; then
+            publish=true
+          fi
+          printf 'publish=%s\nimage=ghcr.io/%s\n' "$publish" "${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Reject tracked private runtime data
+        shell: bash
+        run: |
+          set -euo pipefail
+          private=$(git ls-files -- data/ config/ .env '.env.*' '*.sqlite' '*.sqlite-*' '*.db' '*.db-*')
+          private=$(printf '%s\n' "$private" | grep -Fvx '.env.example' || true)
+          if [[ -n "$private" ]]; then
+            echo 'Private runtime data/configuration is tracked. Remove it from Git before building.' >&2
+            exit 1
+          fi
+      - name: Validate workflow and shell syntax
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/container.yml
+          bash -n scripts/ci/image-smoke.sh
+      - name: Test and package (synthetic services only)
+        run: mvn -B -Dstyle.color=never verify
+      - name: Keep test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-test-reports
+          path: target/surefire-reports/
+          retention-days: 14
+
+  build:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            execution: native-amd64
+          - arch: arm64
+            platform: linux/arm64
+            execution: qemu-on-amd64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Enable ARM64 emulation
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Resolve and record immutable base images
+        id: bases
+        shell: bash
+        env:
+          ARCH: ${{ matrix.arch }}
+          EXECUTION: ${{ matrix.execution }}
+        run: |
+          set -euo pipefail
+          mkdir -p "evidence/$ARCH"
+          printf 'platform=linux/%s\nexecution=%s\ncommit=%s\n' "$ARCH" "$EXECUTION" "$GITHUB_SHA" > "evidence/$ARCH/environment.txt"
+          docker buildx version >> "evidence/$ARCH/environment.txt"
+          docker buildx imagetools inspect maven:3.9.8-eclipse-temurin-21 > "evidence/$ARCH/base-builder.txt"
+          docker buildx imagetools inspect eclipse-temurin:21-jre-jammy > "evidence/$ARCH/base-runtime.txt"
+          builder=$(awk '$1 == "Digest:" { print $2; exit }' "evidence/$ARCH/base-builder.txt")
+          runtime=$(awk '$1 == "Digest:" { print $2; exit }' "evidence/$ARCH/base-runtime.txt")
+          [[ "$builder" =~ ^sha256:[a-f0-9]{64}$ && "$runtime" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'builder=maven@%s\nruntime=eclipse-temurin@%s\n' "$builder" "$runtime" >> "$GITHUB_OUTPUT"
+      - name: Build and load exactly one target image
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          provenance: false
+          tags: ci-assistant:${{ matrix.arch }}
+          build-args: |
+            BUILDER_IMAGE=${{ steps.bases.outputs.builder }}
+            RUNTIME_IMAGE=${{ steps.bases.outputs.runtime }}
+            VCS_REF=${{ github.sha }}
+            SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=container-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=container-${{ matrix.arch }}
+      - name: Check target Java, SQLite and container replacement without network
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+        run: bash scripts/ci/image-smoke.sh "ci-assistant:$ARCH" "$PLATFORM"
+      - name: Export the tested image (publication runs only)
+        if: needs.verify.outputs.publish == 'true'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker save "ci-assistant:$ARCH" -o "image-$ARCH.tar"
+          sha256sum "image-$ARCH.tar" > "image-$ARCH.tar.sha256"
+      - name: Transfer tested image, not source to rebuild
+        if: needs.verify.outputs.publish == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tested-image-${{ matrix.arch }}
+          path: |
+            image-${{ matrix.arch }}.tar
+            image-${{ matrix.arch }}.tar.sha256
+          compression-level: 0
+          retention-days: 2
+          if-no-files-found: error
+      - name: Keep per-platform evidence, including failed checks
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: container-evidence-${{ matrix.arch }}
+          path: evidence/${{ matrix.arch }}/
+          retention-days: 14
+
+  publish-images:
+    # Both build matrix entries must succeed before either publication job can start.
+    needs: [verify, build]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tested-image-${{ matrix.arch }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the tested artifact and record its registry digest
+        env:
+          ARCH: ${{ matrix.arch }}
+          IMAGE: ${{ needs.verify.outputs.image }}
+        run: |
+          set -euo pipefail
+          sha256sum -c "image-$ARCH.tar.sha256"
+          docker load -i "image-$ARCH.tar"
+          tag="$IMAGE:run-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$ARCH"
+          docker tag "ci-assistant:$ARCH" "$tag"
+          docker push "$tag"
+          ref=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
+          [[ "${ref%@*}" == "$IMAGE" && "${ref#*@}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          mkdir -p digests
+          printf '%s\n' "$ref" > "digests/$ARCH.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: digests/${{ matrix.arch }}.txt
+          retention-days: 14
+          if-no-files-found: error
+
+  publish-manifest:
+    needs: [verify, publish-images]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: digests
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish multi-platform tags from verified digests
+        env:
+          IMAGE: ${{ needs.verify.outputs.image }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          refs=()
+          for arch in amd64 arm64; do
+            ref=$(cat "digests/$arch.txt")
+            [[ "${ref%@*}" == "$IMAGE" && "${ref#*@}" =~ ^sha256:[a-f0-9]{64}$ ]]
+            refs+=("$ref")
+          done
+          tags=(--tag "$IMAGE:sha-$GITHUB_SHA")
+          if [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]]; then
+            tags+=(--tag "$IMAGE:latest")
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "$GITHUB_REF_NAME" =~ ^v[A-Za-z0-9_.-]{0,127}$ ]]
+            tags+=(--tag "$IMAGE:$GITHUB_REF_NAME")
+          fi
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+          docker buildx imagetools inspect --raw "$IMAGE:sha-$GITHUB_SHA" > manifest.json
+          jq -e '[.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]' manifest.json
+          docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA" > manifest.txt
+          {
+            printf '## Verified multi-platform image\n\n`%s:sha-%s`\n\n' "$IMAGE" "$GITHUB_SHA"
+            printf 'amd64: native CI; arm64: QEMU on amd64. NAS acceptance remains operator-owned.\n\n```text\n'
+            cat manifest.txt
+            printf '\n```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-manifest
+          path: |
+            manifest.json
+            manifest.txt
+          retention-days: 30
+          if-no-files-found: error

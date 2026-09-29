@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+ARG BUILDER_IMAGE=maven:3.9.8-eclipse-temurin-21
+ARG RUNTIME_IMAGE=eclipse-temurin:21-jre-jammy
+FROM --platform=$BUILDPLATFORM ${BUILDER_IMAGE} AS build
+WORKDIR /build
+COPY pom.xml ./
+COPY src ./src
+COPY Dockerfile compose.yml .dockerignore ./
+COPY .github/workflows/container.yml ./.github/workflows/container.yml
+COPY scripts/ci ./scripts/ci
+RUN mvn -B -Dstyle.color=never verify
+
+FROM ${RUNTIME_IMAGE}
+ARG VCS_REF=unknown
+ARG SOURCE_URL
+LABEL org.opencontainers.image.revision=$VCS_REF org.opencontainers.image.source=$SOURCE_URL
+WORKDIR /app
+RUN groupadd --gid 10001 assistant && useradd --uid 10001 --gid 10001 --no-create-home assistant \
+    && mkdir -p /app/data /app/config && chown 10001:10001 /app/data && chmod 700 /app/data
+COPY --from=build /build/target/wechat-chat-assistant-0.1.0-SNAPSHOT.jar /app/assistant.jar
+USER 10001:10001
+ENV ASSISTANT_DATA_DIR=/app/data HEALTH_PORT=8081
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["java", "-Dloader.main=io.github.personalassistant.runtime.HealthCheck", "-cp", "/app/assistant.jar", "org.springframework.boot.loader.launch.PropertiesLauncher"]
+ENTRYPOINT ["java", "-Djava.awt.headless=true", "-Dorg.sqlite.tmpdir=/tmp", "-jar", "/app/assistant.jar"]
+CMD ["--spring.config.additional-location=file:/app/config/application.yml"]

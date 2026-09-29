@@ -1,0 +1,14 @@
+# Allowlist: real config, chats, probe credentials and local caches never enter the build context.
+**
+!pom.xml
+!src/
+!src/**
+!Dockerfile
+!.dockerignore
+!compose.yml
+!.github/
+!.github/workflows/
+!.github/workflows/container.yml
+!scripts/
+!scripts/ci/
+!scripts/ci/**

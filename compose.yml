@@ -1,0 +1,28 @@
+services:
+  assistant:
+    image: ${ASSISTANT_IMAGE:?Set ASSISTANT_IMAGE to your GHCR image tag or digest}
+    user: "${ASSISTANT_UID:-10001}:${ASSISTANT_GID:-10001}"
+    restart: unless-stopped
+    stop_grace_period: 25s
+    command: ["--spring.config.additional-location=file:/app/config/application.yml", "--assistant.shutdown-grace=20s", "--spring.lifecycle.timeout-per-shutdown-phase=25s"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=128m,mode=1777
+    environment:
+      ASSISTANT_DATA_DIR: /app/data
+      HEALTH_PORT: "8081"
+    volumes:
+      - type: bind
+        source: ${ASSISTANT_HOST_DATA:-./data}
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ASSISTANT_CONFIG:-./config/application.yml}
+        target: /app/config/application.yml
+        read_only: true
+        bind:
+          create_host_path: false
+    # No published ports; health checks run against container-local loopback.

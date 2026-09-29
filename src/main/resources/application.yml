@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: personal-wechat-chat-assistant
+  main:
+    web-application-type: none
+    banner-mode: off
+assistant:
+  enabled: ${ASSISTANT_ENABLED:true}
+  health-port: ${HEALTH_PORT:8081}
+  model:
+    api-base-url: ${MODEL_API_BASE_URL:}
+    api-key: ${MODEL_API_KEY:}
+    name: ${MODEL_NAME:}
+    system-prompt: ${MODEL_SYSTEM_PROMPT:你是我的个人助手，请用中文清晰、准确地回答。}
+    allow-insecure-local-http: false
+    context-capacity: ${MODEL_CONTEXT_CAPACITY:8192}
+    output-budget: 1024
+    safety-margin: 512
+    history-rounds: 20
+    request-timeout: 60s
+    total-time-budget: 90s
+    max-retries: 2
+  wechat:
+    bot-id: ${WECHAT_BOT_ID:}
+    owner-id: ${WECHAT_OWNER_ID:}
+    request-timeout: 15s
+    poll-timeout: 45s
+    login-timeout: 480s
+    max-reply-bytes: 2000
+  storage:
+    directory: ${ASSISTANT_DATA_DIR:./data}
+    max-pending-events: 1000
+    min-free-bytes: 104857600
+    busy-timeout: 5s
+  shutdown-grace: 20s
+logging:
+  level:
+    org.springframework.ai: OFF
+    org.springframework.web.client: OFF
+    org.springframework.web.reactive.function.client: OFF
