@@ -1,24 +1,16 @@
 package io.github.wochen5770.talkweave.runtime.probe;
 
-import java.nio.file.Path;
+import java.nio.file.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import static org.assertj.core.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 class ManagedContainerProbeTest {
     @TempDir Path directory;
-    @Test void managedSettingsAndUsersSurviveReplacementWithPrivatePermissions() throws Exception {
-        Path fixture = directory.resolve("fixture");
-        ManagedContainerProbe.storage("--write", fixture);
-        ManagedContainerProbe.storage("--verify", fixture);
-        assertThatThrownBy(() -> ManagedContainerProbe.storage("--write", fixture))
-                .isInstanceOf(java.nio.file.FileAlreadyExistsException.class);
+    @Test void preservesLegacyMaterialsAndRefusesExistingFixtureTargets() throws Exception {
+        Path old=directory.resolve("old"); ManagedContainerProbe.legacy(old);
+        assertEquals("synthetic-legacy-only",Files.readString(old.resolve("talkweave-admin.sqlite")));
+        assertThrows(FileAlreadyExistsException.class, () -> ManagedContainerProbe.materials(directory));
     }
-    @Test void refusesUnmarkedDirectoriesAndInvalidModes() {
-        assertThatThrownBy(() -> ManagedContainerProbe.storage("--verify", directory)).isInstanceOf(java.io.IOException.class);
-        assertThatThrownBy(() -> ManagedContainerProbe.storage("--other", directory)).isInstanceOf(IllegalArgumentException.class);
-    }
-    @Test void legacyRejectionPreservesContentsAndPermissions() throws Exception {
-        ManagedContainerProbe.legacy(directory.resolve("legacy"));
-    }
+    @Test void rejectsNonJarArtifacts() { assertThrows(Exception.class, () -> ManagedContainerProbe.artifact(directory)); }
 }

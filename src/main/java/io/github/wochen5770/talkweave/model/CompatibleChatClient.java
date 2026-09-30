@@ -2,7 +2,6 @@ package io.github.wochen5770.talkweave.model;
 
 import io.github.wochen5770.talkweave.assistant.AssistantService;
 import io.github.wochen5770.talkweave.conversation.DialogueMessage;
-import io.github.wochen5770.talkweave.runtime.AssistantProperties;
 import io.github.wochen5770.talkweave.runtime.RemoteFailure;
 import java.io.IOException;
 import java.net.http.HttpClient;
@@ -29,7 +28,7 @@ import static io.github.wochen5770.talkweave.runtime.RemoteFailure.Kind.*;
 public final class CompatibleChatClient implements AssistantService, AutoCloseable {
     private final OpenAiChatModel model;
     private final HttpClient http;
-    private final AssistantProperties.Model config;
+    private final ModelConfiguration config;
     private final Long modelVersion;
     private final ThreadLocal<CompatibleUsageCapture> activeCapture = new ThreadLocal<>();
     private final java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
@@ -39,9 +38,9 @@ public final class CompatibleChatClient implements AssistantService, AutoCloseab
         RateLimited(java.time.Duration wait) { super("Model request explicitly rate limited"); this.wait = wait; }
     }
 
-    public CompatibleChatClient(AssistantProperties.Model config) { this(config, null); }
+    public CompatibleChatClient(ModelConfiguration config) { this(config, null); }
 
-    public CompatibleChatClient(AssistantProperties.Model config, Long modelVersion) {
+    public CompatibleChatClient(ModelConfiguration config, Long modelVersion) {
         if (modelVersion != null && modelVersion < 1) throw new IllegalArgumentException("Invalid model version");
         this.modelVersion = modelVersion;
         config.validate();

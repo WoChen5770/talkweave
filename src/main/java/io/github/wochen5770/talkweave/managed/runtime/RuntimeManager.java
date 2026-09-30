@@ -1,6 +1,8 @@
 package io.github.wochen5770.talkweave.managed.runtime;
 
 import io.github.wochen5770.talkweave.managed.persistence.*;
+import io.github.wochen5770.talkweave.conversation.ConversationTimeContext;
+import io.github.wochen5770.talkweave.managed.cache.HistoryService;
 import java.io.IOException;
 import java.nio.file.*;
 import java.time.Duration;
@@ -11,7 +13,7 @@ import java.util.function.LongSupplier;
 /** Reconciles persisted authorization to independent connections. No network work under this lock. */
 public final class RuntimeManager implements AutoCloseable {
     public enum Health { STARTING, RUNNING, DATABASE_UNAVAILABLE, LOW_DISK, GLOBAL_BACKLOG, CONNECTION_LIMIT, STOPPED }
-    public record Status(Health health, int activeConnections, int maxConnections) { }
+    public record Status(Health health, int activeConnections, int maxConnections, HistoryService.Status historyCache) { }
     private final ManagedUsers users;
     private final ManagedSettings settings;
     private final ManagedConversations conversations;
@@ -20,6 +22,8 @@ public final class RuntimeManager implements AutoCloseable {
     private final ChannelRuntime.Ports ports;
     private final ManagedTurnWorker.ModelCall model;
     private final LongSupplier freeBytes;
+    private final ConversationTimeContext timeContext;
+    private final HistoryService history;
     private final FairUserScheduler scheduler;
     private final Map<String, ChannelRuntime> channels = new LinkedHashMap<>();
     private final ScheduledExecutorService coordinator = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("managed-runtime-manager").factory());
@@ -29,6 +33,18 @@ public final class RuntimeManager implements AutoCloseable {
 
     public RuntimeManager(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations, ManagedUsage usage,
                           RuntimeLimits limits, ChannelRuntime.Ports ports, ManagedTurnWorker.ModelCall model, LongSupplier freeBytes) {
+        this(users, settings, conversations, usage, limits, ports, model, freeBytes, ConversationTimeContext.systemDefault());
+    }
+    public RuntimeManager(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations, ManagedUsage usage,
+                          RuntimeLimits limits, ChannelRuntime.Ports ports, ManagedTurnWorker.ModelCall model, LongSupplier freeBytes,
+                          ConversationTimeContext timeContext) {
+        this(users, settings, conversations, usage, limits, ports, model, freeBytes, timeContext, null);
+    }
+    public RuntimeManager(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations, ManagedUsage usage,
+                          RuntimeLimits limits, ChannelRuntime.Ports ports, ManagedTurnWorker.ModelCall model, LongSupplier freeBytes,
+                          ConversationTimeContext timeContext, HistoryService history) {
+        this.history = history;
+        this.timeContext = java.util.Objects.requireNonNull(timeContext);
         this.users = users; this.settings = settings; this.conversations = conversations; this.usage = usage;
         this.limits = limits; this.ports = ports; this.model = model; this.freeBytes = freeBytes;
         scheduler = new FairUserScheduler(limits.concurrency(), limits.maxConnections());
@@ -60,7 +76,7 @@ public final class RuntimeManager implements AutoCloseable {
                 ChannelRuntime.Port port = ports.open();
                 try {
                     var runtime = new ChannelRuntime(scope, users, settings, conversations, usage, scheduler, model, port,
-                            this::receiveAllowed, limits.replyBytes());
+                            this::receiveAllowed, limits.replyBytes(), timeContext, history);
                     channels.put(scope.userId(), runtime); runtime.start();
                 } catch (RuntimeException failure) { port.close(); throw failure; }
             }
@@ -73,7 +89,7 @@ public final class RuntimeManager implements AutoCloseable {
         return !closed && health != Health.DATABASE_UNAVAILABLE && freeBytes.getAsLong() >= limits.minFreeBytes();
     }
     public synchronized boolean live() { return started && !closed; }
-    public synchronized Status status() { return new Status(health, channels.size(), limits.maxConnections()); }
+    public synchronized Status status() { return new Status(health, channels.size(), limits.maxConnections(), history == null ? null : history.status()); }
     public synchronized ChannelRuntime.Status userStatus(ManagedUsers.Overview user) {
         if (!user.enabled()) return new ChannelRuntime.Status(ChannelRuntime.State.STOPPED, "USER_DISABLED");
         if (!user.bound()) return new ChannelRuntime.Status(ChannelRuntime.State.STOPPED, "UNBOUND");

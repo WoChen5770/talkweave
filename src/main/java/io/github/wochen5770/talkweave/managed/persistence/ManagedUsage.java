@@ -27,22 +27,26 @@ public final class ManagedUsage {
     }
     private String begin(ManagedScope scope, long eventSequence, long modelVersion, String expectedConversation) {
         return store.transaction(c -> {
+            ManagedUsers.lockUser(c, scope.userId());
             ManagedUsers.authorize(c, scope);
             var event = ManagedConversations.event(c, scope, eventSequence);
             if (expectedConversation != null && !expectedConversation.equals(event.conversationId())) throw new ManagedProblem(UNAUTHORIZED);
-            if (event.kind() != ManagedConversations.Kind.CHAT || scalar(c, "SELECT count(*) FROM turn WHERE event_sequence=? AND stage='PROCESSING'", eventSequence) != 1) throw new ManagedProblem(CONFLICT);
+            if (event.kind() != ManagedConversations.Kind.CHAT || scalar(c, "SELECT count(*) FROM turn WHERE event_sequence=? AND stage='PROCESSING' AND runtime_epoch=?", eventSequence, store.epoch()) != 1) throw new ManagedProblem(CONFLICT);
             String id = UUID.randomUUID().toString();
             long number = scalar(c, "SELECT count(*)+1 FROM model_attempt WHERE event_sequence=?", eventSequence);
-            update(c, "INSERT INTO model_attempt(id,event_sequence,user_id,binding_id,conversation_id,model_version,attempt_number,started_at,outcome) VALUES (?,?,?,?,?,?,?,?,'STARTED')",
-                    id, eventSequence, scope.userId(), scope.bindingId(), event.conversationId(), modelVersion, number, clock.millis());
+            update(c, "INSERT INTO model_attempt(id,event_sequence,user_id,binding_id,conversation_id,runtime_epoch,model_version,attempt_number,started_at,outcome) VALUES (?,?,?,?,?,?,?,?,?,'STARTED')",
+                    id, eventSequence, scope.userId(), scope.bindingId(), event.conversationId(), store.epoch(), modelVersion, number, clock.millis());
             return id;
         });
     }
     public void record(String attemptId, Outcome outcome, TokenUsage usage) {
         Objects.requireNonNull(outcome); Objects.requireNonNull(usage);
         store.transaction(c -> {
-            if (scalar(c, "SELECT count(*) FROM model_attempt WHERE id=?", attemptId) != 1) throw new ManagedProblem(NOT_FOUND);
-            int written = update(c, "INSERT INTO model_usage(attempt_id,input_tokens,output_tokens,cached_input_tokens,status) VALUES (?,?,?,?,?) ON CONFLICT(attempt_id) DO NOTHING",
+            try (var s = prepare(c, "SELECT id FROM model_attempt WHERE id=? FOR UPDATE", attemptId); var r = s.executeQuery()) {
+                if (!r.next()) throw new ManagedProblem(NOT_FOUND);
+            }
+            if (scalar(c, "SELECT count(*) FROM model_usage WHERE attempt_id=?", attemptId) != 0) return null;
+            int written = update(c, "INSERT INTO model_usage(attempt_id,input_tokens,output_tokens,cached_input_tokens,status) VALUES (?,?,?,?,?)",
                     attemptId, usage.inputTokens(), usage.outputTokens(), usage.cachedInputTokens(), usage.status().name());
             if (written != 0) update(c, "UPDATE model_attempt SET outcome=? WHERE id=?", outcome.name(), attemptId);
             return null;
@@ -56,12 +60,14 @@ public final class ManagedUsage {
         return store.transaction(c -> {
             ManagedUsers.user(c, userId);
             var result = new ArrayList<Conversation>();
-            try (var statement = prepare(c, "SELECT v.rowid sequence,v.id,v.current,v.created_at,v.ended_at,v.last_user_message_at,"
-                    + "b.version,b.active FROM conversation v JOIN binding b ON b.id=v.binding_id AND b.user_id=v.user_id "
-                    + "WHERE v.user_id=? AND v.rowid<? ORDER BY v.rowid DESC LIMIT ?", userId, beforeExclusive, limit);
+            try (var statement = prepare(c, "SELECT v.sequence,v.id,(ac.conversation_id IS NOT NULL) is_current,v.created_at,v.ended_at,v.last_user_message_at,"
+                    + "b.version,(ab.binding_id IS NOT NULL) is_active FROM conversation v JOIN binding b ON b.id=v.binding_id AND b.user_id=v.user_id "
+                    + "LEFT JOIN active_binding ab ON ab.binding_id=b.id AND ab.user_id=v.user_id "
+                    + "LEFT JOIN active_conversation ac ON ac.conversation_id=v.id AND ac.user_id=v.user_id "
+                    + "WHERE v.user_id=? AND v.sequence<? ORDER BY v.sequence DESC LIMIT ?", userId, beforeExclusive, limit);
                  var rows = statement.executeQuery()) {
                 while (rows.next()) result.add(new Conversation(rows.getLong("sequence"), rows.getString("id"), rows.getLong("version"),
-                        rows.getInt("active") == 1, rows.getInt("current") == 1, rows.getLong("created_at"),
+                        rows.getInt("is_active") == 1, rows.getInt("is_current") == 1, rows.getLong("created_at"),
                         nullableLong(rows, "ended_at"), nullableLong(rows, "last_user_message_at")));
             }
             return List.copyOf(result);

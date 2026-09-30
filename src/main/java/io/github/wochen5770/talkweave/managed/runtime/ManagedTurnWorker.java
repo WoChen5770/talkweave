@@ -5,6 +5,7 @@ import io.github.wochen5770.talkweave.channel.wechat.WechatApiClient;
 import io.github.wochen5770.talkweave.conversation.*;
 import io.github.wochen5770.talkweave.managed.persistence.*;
 import io.github.wochen5770.talkweave.model.*;
+import io.github.wochen5770.talkweave.managed.cache.HistoryService;
 import io.github.wochen5770.talkweave.runtime.RemoteFailure;
 import java.util.List;
 
@@ -17,13 +18,6 @@ public final class ManagedTurnWorker {
         AssistantService.Reply answer(ManagedSettings.ModelSnapshot snapshot, ModelRequestContext context,
                                       List<DialogueMessage> messages, ModelAttemptObserver observer);
     }
-    public static ModelCall compatibleModel() {
-        return (snapshot, context, messages, observer) -> {
-            try (var client = new CompatibleChatClient(snapshot.configuration(), snapshot.version())) {
-                return client.answer(context, messages, observer);
-            }
-        };
-    }
     private final ManagedUsers users;
     private final ManagedSettings settings;
     private final ManagedConversations conversations;
@@ -31,6 +25,8 @@ public final class ManagedTurnWorker {
     private final ModelCall model;
     private final Sender sender;
     private final ReplyFormatter formatter;
+    private final ConversationTimeContext timeContext;
+    private final HistoryService historyService;
     private final java.util.function.Function<ManagedConversations.Event, Runnable> modelActivity;
     public ManagedTurnWorker(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations,
                              ManagedUsage usage, ModelCall model, Sender sender, int replyBytes) {
@@ -38,6 +34,18 @@ public final class ManagedTurnWorker {
     }
     public ManagedTurnWorker(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations, ManagedUsage usage,
                              ModelCall model, Sender sender, int replyBytes, java.util.function.Function<ManagedConversations.Event, Runnable> modelActivity) {
+        this(users, settings, conversations, usage, model, sender, replyBytes, modelActivity, ConversationTimeContext.systemDefault());
+    }
+    public ManagedTurnWorker(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations, ManagedUsage usage,
+                             ModelCall model, Sender sender, int replyBytes, java.util.function.Function<ManagedConversations.Event, Runnable> modelActivity,
+                             ConversationTimeContext timeContext) {
+        this(users, settings, conversations, usage, model, sender, replyBytes, modelActivity, timeContext, null);
+    }
+    public ManagedTurnWorker(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations, ManagedUsage usage,
+                             ModelCall model, Sender sender, int replyBytes, java.util.function.Function<ManagedConversations.Event, Runnable> modelActivity,
+                             ConversationTimeContext timeContext, HistoryService historyService) {
+        this.historyService = historyService;
+        this.timeContext = java.util.Objects.requireNonNull(timeContext);
         this.modelActivity = modelActivity;
         this.users = users; this.settings = settings; this.conversations = conversations;
         this.usage = usage; this.model = model; this.sender = sender; this.formatter = new ReplyFormatter(replyBytes);
@@ -60,7 +68,8 @@ public final class ManagedTurnWorker {
                 };
             } catch (RuntimeException failure) { delivery = ManagedConversations.Delivery.UNKNOWN; }
             // A DB failure escapes; SENDING must become UNKNOWN on recovery, never be auto-replayed.
-            conversations.finishSend(scope, event.sequence(), delivery);
+            var delivered = conversations.finishSend(scope, event.sequence(), delivery);
+            if (historyService != null) historyService.afterSend(event.sequence(), delivered);
             return true;
         }
         if (event.kind() != ManagedConversations.Kind.CHAT) {
@@ -76,7 +85,10 @@ public final class ManagedTurnWorker {
             save(scope, event.sequence(), "管理员尚未配置模型服务，请稍后再试。", false, false); return true;
         }
         var snapshot = configured.get();
-        var prompt = new ContextBudget(snapshot.configuration()).prepare(conversations.history(scope, event.sequence()), event.text());
+        var history = historyService == null ? conversations.history(scope, event.sequence(), snapshot.configuration().historyRounds())
+                : historyService.load(scope, event.sequence(), snapshot);
+        var time = timeContext.snapshot(event.receivedAt());
+        var prompt = new ContextBudget(snapshot.configuration()).prepare(history, event.text(), time);
         if (prompt.isEmpty()) {
             save(scope, event.sequence(), "输入超出上下文预算，请缩短问题或联系管理员。", false, false); return true;
         }

@@ -2,6 +2,10 @@ package io.github.wochen5770.talkweave.managed.admin;
 
 import io.github.wochen5770.talkweave.managed.runtime.*;
 import io.github.wochen5770.talkweave.managed.persistence.*;
+import io.github.wochen5770.talkweave.conversation.ConversationTimeContext;
+import io.github.wochen5770.talkweave.managed.config.ExternalServices;
+import io.github.wochen5770.talkweave.managed.binding.ManagedMaterials;
+import io.github.wochen5770.talkweave.managed.cache.*;
 import java.nio.file.Path;
 import java.time.Clock;
 import org.springframework.context.annotation.*;
@@ -19,8 +23,21 @@ public class ManagedAdminConfiguration {
                         com.fasterxml.jackson.databind.MapperFeature.ALLOW_COERCION_OF_SCALARS);
     }
     @Bean Clock managedClock() { return Clock.systemUTC(); }
-    @Bean(destroyMethod = "close") ManagedStore managedStore(Environment env) {
-        return ManagedStore.open(Path.of(env.getProperty("managed.directory", "./data-multi-user")));
+    @Bean ConversationTimeContext conversationTimeContext(Clock clock, Environment env) {
+        return new ConversationTimeContext(clock, env.getProperty("managed.conversation.time-zone", ConversationTimeContext.DEFAULT_ZONE));
+    }
+    @Bean @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(ExternalServices.class)
+    ExternalServices externalServices(Environment env) {
+        var config = ExternalServices.read(env);
+        ManagedMaterials.inspect(config.materialsPath());
+        return config;
+    }
+    @Bean(destroyMethod = "close") @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(ManagedStore.class)
+    ManagedStore managedStore(ExternalServices config) {
+        return ManagedStore.open(config.mysql());
+    }
+    @Bean(destroyMethod = "close") ManagedMaterials managedMaterials(ManagedStore store, ExternalServices config) {
+        return ManagedMaterials.open(config.materialsPath(), store.installationId());
     }
     @Bean RuntimeLimits runtimeLimits(Environment env) {
         var d = RuntimeLimits.defaults();
@@ -35,6 +52,10 @@ public class ManagedAdminConfiguration {
         return new ManagedConversations(store, clock, limits.perUserBacklog(), limits.totalBacklog());
     }
     @Bean(destroyMethod = "close") ManagedModelPool managedModelPool() { return new ManagedModelPool(); }
+    @Bean(destroyMethod = "close") HistoryService historyService(ManagedStore store, ManagedConversations conversations, ExternalServices config) {
+        return new HistoryService(conversations, config.historyCache(), config.historyCache().enabled()
+                ? new RedisHistoryCache(config.redis(), config.historyCache()) : null, store.installationId(), store.cacheEpoch());
+    }
     @Bean ChannelRuntime.Ports channelPorts(Environment env) {
         var hosts = org.springframework.boot.context.properties.bind.Binder.get(env)
                 .bind("assistant.wechat.trusted-hosts", org.springframework.boot.context.properties.bind.Bindable.listOf(String.class))
@@ -43,9 +64,10 @@ public class ManagedAdminConfiguration {
     }
     @Bean(initMethod = "start", destroyMethod = "close")
     RuntimeManager runtimeManager(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations,
-                                  ManagedUsage usage, RuntimeLimits limits, ChannelRuntime.Ports ports, ManagedModelPool models, Environment env) {
+                                  ManagedUsage usage, RuntimeLimits limits, ChannelRuntime.Ports ports, ManagedModelPool models, Environment env,
+                                  ConversationTimeContext timeContext, ExternalServices config, ManagedMaterials materials, HistoryService history) {
         return new RuntimeManager(users, settings, conversations, usage, limits, ports, models,
-                RuntimeManager.diskSpace(Path.of(env.getProperty("managed.directory", "./data-multi-user"))));
+                RuntimeManager.diskSpace(config.materialsPath()), timeContext, history);
     }
     @Bean(initMethod = "start", destroyMethod = "close")
     io.github.wochen5770.talkweave.runtime.HealthServer managedHealth(RuntimeManager runtime, Environment env) throws java.io.IOException {
@@ -56,9 +78,8 @@ public class ManagedAdminConfiguration {
     @Bean ManagedUsers managedUsers(ManagedStore store, Clock clock) { return new ManagedUsers(store, clock); }
     @Bean ManagedUsage managedUsage(ManagedStore store, Clock clock) { return new ManagedUsage(store, clock); }
     @Bean ManagedAudit managedAudit(ManagedStore store, Clock clock) { return new ManagedAudit(store, clock); }
-    @Bean io.github.wochen5770.talkweave.managed.binding.BindingMaterials bindingMaterials(ManagedStore store, Environment env) {
-        // ManagedStore has validated the layout before any login-material directory is written.
-        return new io.github.wochen5770.talkweave.managed.binding.BindingMaterials(Path.of(env.getProperty("managed.directory", "./data-multi-user")));
+    @Bean io.github.wochen5770.talkweave.managed.binding.BindingMaterials bindingMaterials(ManagedMaterials materials, ExternalServices config) {
+        return new io.github.wochen5770.talkweave.managed.binding.BindingMaterials(config.materialsPath());
     }
     @Bean io.github.wochen5770.talkweave.managed.binding.BindingCoordinator.Ports bindingPorts(Environment env) {
         var hosts = org.springframework.boot.context.properties.bind.Binder.get(env)

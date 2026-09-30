@@ -17,9 +17,9 @@ import org.springframework.context.annotation.Profile;
 public class ManagedBrowserFixture {
     public static void main(String[] args) {
         if (java.util.Arrays.asList(args).contains("--synthetic.seed-usage=true")) {
-            String directory = java.util.Arrays.stream(args).filter(a -> a.startsWith("--managed.directory="))
-                    .map(a -> a.substring("--managed.directory=".length())).findFirst().orElseThrow();
-            try (var store = io.github.wochen5770.talkweave.managed.persistence.ManagedStore.open(java.nio.file.Path.of(directory))) {
+            var target = io.github.wochen5770.talkweave.managed.config.ExternalIntegrationTarget.load();
+            target.requireSchemaInitialization(); target.requireSchemaUpgrade();
+            try (var store = io.github.wochen5770.talkweave.managed.persistence.ManagedStore.open(target.config().mysql())) {
                 if (new io.github.wochen5770.talkweave.managed.persistence.ManagedUsers(store, java.time.Clock.systemUTC()).list().isEmpty())
                     AdminUsageFixture.seed(store);
             }

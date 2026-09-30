@@ -1,5 +1,7 @@
 # Managed production entry point; real scanner authorization remains evidence-gated.
 spring:
+  config:
+    import: optional:file:${EXTERNAL_SERVICES_CONFIG:./config/external-services.local.yml}
   lifecycle:
     timeout-per-shutdown-phase: 1s
   main:
@@ -33,7 +35,9 @@ server:
 assistant:
   enabled: false
 managed:
+  conversation:
+    time-zone: ${CONVERSATION_TIME_ZONE:Asia/Shanghai}
   health-port: ${HEALTH_PORT:8081}
-  directory: ${MANAGED_DATA_DIR:./data-multi-user}
+  materials-directory: ${MANAGED_MATERIALS_DIR:./materials}
   bootstrap-username: ${ADMIN_INIT_USERNAME:${ADMIN_INITIAL_USERNAME:admin}}
   bootstrap-password: ${ADMIN_INIT_PASSWORD:${ADMIN_INITIAL_PASSWORD:}}

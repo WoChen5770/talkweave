@@ -3,6 +3,7 @@ package io.github.wochen5770.talkweave.managed.runtime;
 import io.github.wochen5770.talkweave.channel.wechat.WechatApiClient;
 import io.github.wochen5770.talkweave.channel.wechat.WechatApiClient.*;
 import io.github.wochen5770.talkweave.managed.persistence.*;
+import io.github.wochen5770.talkweave.conversation.ConversationTimeContext;
 import io.github.wochen5770.talkweave.runtime.RemoteFailure;
 import java.time.Duration;
 import java.util.Set;
@@ -38,7 +39,13 @@ public final class ChannelRuntime implements AutoCloseable {
 
     public ChannelRuntime(ManagedScope scope, ManagedUsers users, ManagedSettings settings, ManagedConversations conversations,
                           ManagedUsage usage, FairUserScheduler scheduler, ManagedTurnWorker.ModelCall model,
-                          Port port, BooleanSupplier receiveAllowed, int replyBytes) {
+                          Port port, BooleanSupplier receiveAllowed, int replyBytes, ConversationTimeContext timeContext) {
+        this(scope, users, settings, conversations, usage, scheduler, model, port, receiveAllowed, replyBytes, timeContext, null);
+    }
+    public ChannelRuntime(ManagedScope scope, ManagedUsers users, ManagedSettings settings, ManagedConversations conversations,
+                          ManagedUsage usage, FairUserScheduler scheduler, ManagedTurnWorker.ModelCall model,
+                          Port port, BooleanSupplier receiveAllowed, int replyBytes, ConversationTimeContext timeContext,
+                          io.github.wochen5770.talkweave.managed.cache.HistoryService history) {
         this.scope = scope; this.users = users; this.conversations = conversations; this.port = port; this.receiveAllowed = receiveAllowed;
         var worker = new ManagedTurnWorker(users, settings, conversations, usage,
                 (snapshot, context, messages, observer) -> {
@@ -49,7 +56,7 @@ public final class ChannelRuntime implements AutoCloseable {
                     var current = authorized();
                     try { port.send(current.credentials(), recipient, context, clientId, text); }
                     catch (RemoteFailure failure) { remote(failure); throw failure; }
-                }, replyBytes, this::typingActivity);
+                }, replyBytes, this::typingActivity, timeContext, history);
         registration = scheduler.register(scope.userId(), () -> {
             if (closed.get() || halted) return false;
             return worker.runOnce(scope);
@@ -142,8 +149,10 @@ public final class ChannelRuntime implements AutoCloseable {
     private void remote(RemoteFailure failure) {
         error = "WECHAT_" + failure.kind().name();
         if (failure.kind() == RemoteFailure.Kind.STALE_TOKEN || failure.kind() == RemoteFailure.Kind.UNSAFE_ENDPOINT) {
-            halted = true; state = State.REAUTH_REQUIRED;
+            halted = true;
             users.invalidateSession(scope);
+            // Publish the terminal status only after revocation commits.
+            state = State.REAUTH_REQUIRED;
             registration.close();
         }
     }

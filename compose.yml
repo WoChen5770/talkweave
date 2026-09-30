@@ -9,18 +9,26 @@ services:
     tmpfs:
       - /tmp:rw,exec,nosuid,nodev,size=128m,mode=1777
     environment:
-      MANAGED_DATA_DIR: /app/data
+      MANAGED_MATERIALS_DIRECTORY: /app/materials
+      EXTERNAL_SERVICES_CONFIG: /app/config/external-services.yml
       ADMIN_ADDRESS: 0.0.0.0
       ADMIN_INIT_USERNAME: ${ADMIN_INIT_USERNAME:-admin}
       ADMIN_INIT_PASSWORD: ${ADMIN_INIT_PASSWORD:-}
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+      CONVERSATION_TIME_ZONE: ${CONVERSATION_TIME_ZONE:-Asia/Shanghai}
       HEALTH_PORT: "8081"
     ports:
       - "${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-8680}:8680"
     volumes:
       - type: bind
-        source: ${ASSISTANT_HOST_DATA:-./data-multi-user}
-        target: /app/data
+        source: ${ASSISTANT_HOST_MATERIALS:-./materials}
+        target: /app/materials
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${EXTERNAL_SERVICES_CONFIG:-./config/external-services.local.yml}
+        target: /app/config/external-services.yml
+        read_only: true
         bind:
           create_host_path: false
     # Health port 8081 stays on container-local loopback; never publish it.

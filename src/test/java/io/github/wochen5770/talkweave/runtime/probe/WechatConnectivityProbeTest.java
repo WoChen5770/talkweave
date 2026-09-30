@@ -16,12 +16,12 @@ class WechatConnectivityProbeTest {
     @TempDir Path temp;
     @Test void onlyExactPrivateNonceAndValidPrivateMessageMayTriggerTheSingleReply() {
         var valid = new Incoming("1", "synthetic-user", "synthetic-context", "wx-check-random", false, 1, 2);
-        assertThat(WechatConnectivityProbe.matches("wx-check-random", valid)).isTrue();
-        assertThat(WechatConnectivityProbe.matches("other-nonce", valid)).isFalse();
-        assertThat(WechatConnectivityProbe.matches("wx-check-random", new Incoming("1", "u", "c", "wx-check-random", true, 1, 2))).isFalse();
-        assertThat(WechatConnectivityProbe.matches("wx-check-random", new Incoming(null, "u", "c", "wx-check-random", false, 1, 2))).isFalse();
-        assertThat(WechatConnectivityProbe.matches("wx-check-random", new Incoming("1", "u", "", "wx-check-random", false, 1, 2))).isFalse();
-        assertThat(WechatConnectivityProbe.matches("wx-check-random", new Incoming("1", "u", "c", "wx-check-random", false, 2, 2))).isFalse();
+        assertThat(ProbeMessages.matches("wx-check-random", valid)).isTrue();
+        assertThat(ProbeMessages.matches("other-nonce", valid)).isFalse();
+        assertThat(ProbeMessages.matches("wx-check-random", new Incoming("1", "u", "c", "wx-check-random", true, 1, 2))).isFalse();
+        assertThat(ProbeMessages.matches("wx-check-random", new Incoming(null, "u", "c", "wx-check-random", false, 1, 2))).isFalse();
+        assertThat(ProbeMessages.matches("wx-check-random", new Incoming("1", "u", "", "wx-check-random", false, 1, 2))).isFalse();
+        assertThat(ProbeMessages.matches("wx-check-random", new Incoming("1", "u", "c", "wx-check-random", false, 2, 2))).isFalse();
     }
     @Test void privateQrRoundTripsAndVerificationIsChallengeBoundAndOneTime() throws Exception {
         Path directory = temp.resolve("probe");

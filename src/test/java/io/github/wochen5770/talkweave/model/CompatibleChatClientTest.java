@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.*;
 class CompatibleChatClientTest {
     private final ObjectMapper json = new ObjectMapper();
     private final java.util.List<CompatibleChatClient> clients = new java.util.ArrayList<>();
-    private CompatibleChatClient create(io.github.wochen5770.talkweave.runtime.AssistantProperties.Model config) {
+    private CompatibleChatClient create(ModelConfiguration config) {
         var client = new CompatibleChatClient(config);
         clients.add(client);
         return client;
@@ -90,9 +90,9 @@ class CompatibleChatClientTest {
             assertThat(fake.pendingRequests()).isZero();
         }
     }
-    private io.github.wochen5770.talkweave.runtime.AssistantProperties.Model budget(FakeHttpService fake, int requestSeconds, int totalSeconds, int retries) {
+    private ModelConfiguration budget(FakeHttpService fake, int requestSeconds, int totalSeconds, int retries) {
         var c = TestProperties.model(fake.baseUri().toString(), "fake-key");
-        return new io.github.wochen5770.talkweave.runtime.AssistantProperties.Model(c.apiBaseUrl(), c.apiKey(), c.name(), c.systemPrompt(), true,
+        return new ModelConfiguration(c.apiBaseUrl(), c.apiKey(), c.name(), c.systemPrompt(), true,
                 c.contextCapacity(), c.outputBudget(), c.safetyMargin(), c.historyRounds(), java.time.Duration.ofSeconds(requestSeconds), java.time.Duration.ofSeconds(totalSeconds), retries);
     }
     @Test void rateLimitRetriesOnlyWithinAttemptBudgetAndPreservesRequest() throws Exception {
@@ -152,7 +152,7 @@ class CompatibleChatClientTest {
     private static ModelRequestContext requestContext() {
         return new ModelRequestContext("private-user", "private-binding", "private-conversation", 7, 2, 3, 1);
     }
-    private CompatibleChatClient managed(io.github.wochen5770.talkweave.runtime.AssistantProperties.Model config) {
+    private CompatibleChatClient managed(ModelConfiguration config) {
         var client = new CompatibleChatClient(config, 1L); clients.add(client); return client;
     }
     private static String withUsage(String usage, String text) {
@@ -249,33 +249,55 @@ class CompatibleChatClientTest {
     @Test void strictRelayAcceptsStablePrefixAndFullHistoryWithoutSpecialCacheFields() throws Exception {
         try (var fake = new FakeHttpService(request -> {
             try {
-                var fields = new java.util.HashSet<String>(); json.readTree(request.body()).fieldNames().forEachRemaining(fields::add);
-                return fields.equals(java.util.Set.of("model", "messages", "max_tokens", "stream"));
+                var body = json.readTree(request.body());
+                var fields = new java.util.HashSet<String>(); body.fieldNames().forEachRemaining(fields::add);
+                if (!fields.equals(java.util.Set.of("model", "messages", "max_tokens", "stream"))) return false;
+                var messages = body.path("messages");
+                if (messages.size() != 3 && messages.size() != 5) return false;
+                for (var message : messages) {
+                    var messageFields = new java.util.HashSet<String>(); message.fieldNames().forEachRemaining(messageFields::add);
+                    if (!messageFields.equals(java.util.Set.of("role", "content"))) return false;
+                }
+                return messages.get(0).path("role").asText().equals("system")
+                        && messages.get(messages.size() - 2).path("role").asText().equals("system")
+                        && messages.get(messages.size() - 2).path("content").asText().startsWith("服务端时间上下文：")
+                        && messages.get(messages.size() - 1).path("role").asText().equals("user")
+                        && (messages.size() == 3 || (messages.get(1).path("role").asText().equals("user")
+                        && messages.get(2).path("role").asText().equals("assistant")));
             } catch (Exception invalid) { return false; }
         })) {
             var config = TestProperties.model(fake.baseUri().toString(), "fake-key");
             var context = new io.github.wochen5770.talkweave.conversation.ContextBudget(config);
-            var first = context.prepare(List.of(), "question one").orElseThrow();
+            var now = java.time.Instant.parse("2026-09-29T15:59:00Z");
+            var time = new io.github.wochen5770.talkweave.conversation.ConversationTimeContext(
+                    java.time.Clock.fixed(now, java.time.ZoneOffset.UTC), "Asia/Shanghai").snapshot(now.toEpochMilli());
+            var nextTime = new io.github.wochen5770.talkweave.conversation.ConversationTimeContext(
+                    java.time.Clock.fixed(now.plusSeconds(120), java.time.ZoneOffset.UTC), "Asia/Shanghai").snapshot(now.toEpochMilli());
+            var first = context.prepare(List.of(), "question one", time).orElseThrow();
+            fake.enqueue(429, "{}", Map.of("Retry-After", "0"));
             fake.enqueue(200, completion("answer one", "stop"));
             fake.enqueue(200, completion("answer two", "stop"));
             var client = managed(config);
             var firstReply = client.answer(requestContext(), first, ModelAttemptObserver.noop());
             var second = context.prepare(List.of(new DialogueMessage(USER, "question one"),
-                    new DialogueMessage(ASSISTANT, firstReply.text())), "question two").orElseThrow();
+                    new DialogueMessage(ASSISTANT, firstReply.text())), "question two", nextTime).orElseThrow();
             assertThat(client.answer(requestContext(), second, ModelAttemptObserver.noop()).text()).isEqualTo("answer two");
-            var a = json.readTree(fake.take().body()).get("messages");
+            String firstRequest = fake.take().body();
+            assertThat(fake.take().body()).isEqualTo(firstRequest); // Retry includes the identical time snapshot.
+            var a = json.readTree(firstRequest).get("messages");
             var b = json.readTree(fake.take().body()).get("messages");
-            assertThat(a.size()).isEqualTo(2); assertThat(b.size()).isEqualTo(4);
-            assertThat(b.get(0)).isEqualTo(a.get(0)); assertThat(b.get(1)).isEqualTo(a.get(1));
+            assertThat(a.size()).isEqualTo(3); assertThat(b.size()).isEqualTo(5);
+            assertThat(b.get(0)).isEqualTo(a.get(0)); assertThat(b.get(1)).isEqualTo(a.get(2));
             assertThat(b.get(2).get("content").asText()).isEqualTo("answer one");
-            assertThat(b.get(3).get("content").asText()).isEqualTo("question two");
+            assertThat(b.get(3).get("content").asText()).isEqualTo(nextTime.text()).isNotEqualTo(time.text());
+            assertThat(b.get(4).get("content").asText()).isEqualTo("question two");
             assertThat(firstReply.usage()).isEqualTo(TokenUsage.unknown());
         }
     }
     @Test void boundedContextDropsOldTurnsEvenWhenThatChangesCachePrefix() throws Exception {
         try (var fake = new FakeHttpService()) {
             var c = TestProperties.model(fake.baseUri().toString(), "fake-key");
-            var small = new io.github.wochen5770.talkweave.runtime.AssistantProperties.Model(c.apiBaseUrl(), c.apiKey(), c.name(), c.systemPrompt(), true,
+            var small = new ModelConfiguration(c.apiBaseUrl(), c.apiKey(), c.name(), c.systemPrompt(), true,
                     1024, 128, 64, 1, c.requestTimeout(), c.totalTimeBudget(), c.maxRetries());
             var history = List.of(new DialogueMessage(USER,"old-".repeat(300)), new DialogueMessage(ASSISTANT,"old reply"),
                     new DialogueMessage(USER,"recent"),new DialogueMessage(ASSISTANT,"recent reply"));

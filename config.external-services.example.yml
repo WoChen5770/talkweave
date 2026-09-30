@@ -1,0 +1,53 @@
+# 外部 MySQL / Redis 连接信息
+# 填写 config/external-services.local.yml；该目录已被 .gitignore 排除。
+# 新版本启动会读取 config/external-services.local.yml；可用 EXTERNAL_SERVICES_CONFIG 改路径。
+# 重新构建的新 JAR 才包含 MySQL 链路，不要据此启动旧 JAR。
+# 启动时会连接并初始化空专用 schema，或升级/打开已识别布局；不导入旧 SQLite。
+# 只填写本项目专用资源。现成 MySQL 服务可以复用，但 schema 须专用且为空，
+# 或为后续已识别的 Talkweave MySQL 布局；不要填写其他应用正在使用的业务库。
+# 不会自动创建/删除数据库、用户或清空 Redis。填好后不要把密码贴到聊天中。
+#
+# 字符串建议保持单引号；密码中若有单引号，写成两个单引号，例如 'abc''def'。
+# 主机只填 IP/域名，不带 http://、端口或路径。
+
+managed:
+  mysql:
+    host: ''                   # 必填：MySQL 所在 NAS 的 IP/域名
+    port: 3306                 # 按现有服务修改
+    schema: ''                 # 必填：本项目专用的已有空库名
+    username: ''               # 必填：仅授权本项目 schema 的账号
+    password: ''               # 在本地填写，不提交、不分享
+    # 按现有服务选择：VERIFY_IDENTITY 验证证书和主机名；
+    # 仅确认是可信内网且服务未启用 TLS 时，才显式填写 DISABLED。
+    # 不会因证书错误自动降低安全级别。自签 CA 的信任配置接入时另行确认。
+    ssl-mode: 'DISABLED'        # 当前明确选择不启用 SSL；仅限受信任网络
+    pool-size: 8
+    connect-timeout: 3s
+    socket-timeout: 3s
+    acquire-timeout: 1s
+
+  redis:
+    host: ''                   # 必填：Redis 所在 NAS 的 IP/域名
+    port: 6379                 # 按现有服务修改，TLS 端口可能不同
+    database: 0                # 当前选定逻辑库；项目隔离仍依赖键前缀和 ACL
+    username: 'default'        # 有专用 ACL 账号则填写其名称
+    password: ''               # 在本地填写
+    tls: false                 # 当前明确选择不启用 TLS；仅限受信任网络
+
+  history-cache:
+    enabled: true              # false 关闭缓存，MySQL 仍必需
+    key-prefix: 'talkweave'     # 只访问此前缀；另附安装/运行/用户/会话标识
+    ttl: 60m
+    max-entry-bytes: 262144     # 单个完整窗口 256 KiB
+    command-timeout: 100ms
+    stage-budget: 250ms
+    max-concurrent: 8
+    request-queue-size: 32
+
+  conversation:
+    time-zone: 'Asia/Shanghai'
+  materials-directory: './materials' # 新运行链路专用，不指向旧 SQLite/登录材料目录
+
+# Java 单元测试不读取此文件；外部集成测试必须单独显式启用并核对目标。
+# 此连接不能自动用于破坏性集成测试；如需测试建表/故障/恢复，须另行确认
+# 专用测试 schema、Redis 键前缀及允许操作，不能复用其他应用的数据。

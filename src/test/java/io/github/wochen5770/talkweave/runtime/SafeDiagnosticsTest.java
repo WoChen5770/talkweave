@@ -15,7 +15,10 @@ class SafeDiagnosticsTest {
                 .warn("No choices for prompt: fake-private-conversation");
         LoggerFactory.getLogger("org.springframework.web.client.RestClient")
                 .error("Upstream error: fake-private-response");
+        LoggerFactory.getLogger("com.zaxxer.hikari.pool.ProxyConnection").warn("fake-private-jdbc", new RuntimeException("fake-database-password"));
+        LoggerFactory.getLogger("io.lettuce.core.RedisClient").error("fake-private-redis");
         assertThat(output.getAll()).doesNotContain("fake-private-conversation", "fake-private-response");
+        assertThat(output.getAll()).doesNotContain("fake-private-jdbc", "fake-database-password", "fake-private-redis");
     }
 
     @Test void logsOnlyFixedFields(CapturedOutput output) {

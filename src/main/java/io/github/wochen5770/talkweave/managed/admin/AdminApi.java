@@ -1,8 +1,9 @@
 package io.github.wochen5770.talkweave.managed.admin;
 
+import io.github.wochen5770.talkweave.model.ModelConfiguration;
+
 import io.github.wochen5770.talkweave.managed.persistence.*;
 import io.github.wochen5770.talkweave.managed.runtime.*;
-import io.github.wochen5770.talkweave.runtime.AssistantProperties;
 import java.time.Duration;
 import java.util.*;
 import org.springframework.context.annotation.Profile;
@@ -58,7 +59,7 @@ public class AdminApi {
         if (key == null) key = settings.currentModel().map(s -> s.configuration().apiKey()).orElse(null);
         if (value.systemPrompt() != null && value.systemPrompt().length() > 32_768 || key != null && key.length() > 4096)
             throw new ManagedProblem(ManagedProblem.Code.INVALID_INPUT);
-        var model = new AssistantProperties.Model(value.apiBaseUrl(), key, value.name(), value.systemPrompt(),
+        var model = new ModelConfiguration(value.apiBaseUrl(), key, value.name(), value.systemPrompt(),
                 value.allowInsecureLocalHttp(), value.contextCapacity(), value.outputBudget(), value.safetyMargin(), value.historyRounds(),
                 Duration.ofSeconds(value.requestTimeoutSeconds()), Duration.ofSeconds(value.totalTimeBudgetSeconds()), value.maxRetries());
         return ModelView.from(settings.saveModel(model));
