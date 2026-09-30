@@ -11,3 +11,5 @@ Java 21 / Spring Boot 单应用容器微信助手：外部 MySQL、可选 Redis 
 
 构建：`mvn verify`（Java 21）；前端逻辑回归：`node --test src/test/js/*.test.cjs`。
 默认镜像仅支持 managed；必须配置外部 MySQL，缓存启用时还需 Redis。连接模板为 `config.external-services.example.yml`，模型 Key 在受认证页面设置。Compose 仅发布回环 8680，健康端口不公开。
+
+NAS 默认值：MySQL SSL `DISABLED`、Redis TLS `false`、镜像运行用户 `0:0`，自定义 Compose 可省略这三项；连接地址、专用库和账号仍需填写。仅适用于可信受限内网，显式 TLS 和非 root 用户可覆盖默认值。支持直接通过 `environment` 配置连接，不必额外挂载 YAML；见 [精简环境变量配置](docs/mysql-redis-operations.md#精简环境变量配置)。这些默认值需使用包含本次改动的新镜像，旧镜像不会自动改变。

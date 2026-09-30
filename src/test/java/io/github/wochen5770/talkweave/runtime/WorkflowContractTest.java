@@ -163,13 +163,24 @@ class WorkflowContractTest {
         assertThat(ignore).contains("**\n", "!src/**", "!.github/workflows/container.yml")
                 .doesNotContain("!config", "!data", "!.env", "!.build-cache");
         String docker = Files.readString(Path.of("Dockerfile"));
-        assertThat(docker).contains("USER 10001:10001", "COPY --from=build", "FROM ${RUNTIME_IMAGE}");
+        assertThat(docker).contains("COPY --from=build", "FROM ${RUNTIME_IMAGE}");
         assertThat(docker).contains("EXTERNAL_SERVICES_CONFIG=/app/config/external-services.yml", "ADMIN_ADDRESS=0.0.0.0");
         assertThat(docker).contains("EXPOSE 8680");
         assertThat(map(yaml("src/main/resources/application-managed.yml").get("server")))
                 .containsEntry("port", "${ADMIN_PORT:8680}");
         assertThat(docker.substring(docker.indexOf("FROM ${RUNTIME_IMAGE}")))
                 .doesNotContain("COPY src", "COPY config", "COPY data", "diagnostics.jar", "sqlite");
+    }
+    @Test void imageDefaultsToRootAndSmokeRetainsNonrootOverrideCoverage() throws Exception {
+        String docker = Files.readString(Path.of("Dockerfile"));
+        String runtime = docker.substring(docker.indexOf("FROM ${RUNTIME_IMAGE}"));
+        assertThat(runtime.lines().filter(line -> line.startsWith("USER ")).toList()).containsExactly("USER 0:0");
+        assertThat(runtime).contains("useradd --uid 10001 --gid 10001", "chown 0:0 /app/materials", "chmod 700 /app/materials")
+                .doesNotContain("MANAGED_MYSQL_SSLMODE=", "MANAGED_REDIS_TLS=");
+        String smoke = Files.readString(Path.of("scripts/ci/image-smoke.sh"));
+        assertThat(smoke).contains("test \"$(id -u):$(id -g)\" = \"0:0\"",
+                "--user 10001:10001", "test \"$(id -u):$(id -g)\" = \"10001:10001\"",
+                "identity-nonroot.txt", "for uid in 0 10001", "if [[ \"$uid\" != 0 ]]; then mounted+=(--user \"$uid:$uid\"); fi");
     }
     @Test void externalIntegrationIsExplicitProtectedAndSeparateFromPublication() throws Exception {
         var external=map(jobs().get("external-integration"));

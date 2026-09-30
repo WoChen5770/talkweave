@@ -6,7 +6,10 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.mock.env.MockEnvironment;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -28,10 +31,10 @@ class ExternalServicesTest {
         return ExternalServices.read(environment);
     }
 
-    @Test void defaultsAndExplicitPlaintextAreValidatedWithoutNetworking() {
+    @Test void defaultsUsePlaintextForTrustedNasWithoutNetworking() {
         var config = read(valid());
-        assertEquals(ExternalServices.SslMode.VERIFY_IDENTITY, config.mysql().sslMode());
-        assertTrue(config.redis().tls());
+        assertEquals(ExternalServices.SslMode.DISABLED, config.mysql().sslMode());
+        assertFalse(config.redis().tls());
         assertEquals("Asia/Shanghai", config.conversation().timeZone());
         assertEquals(Duration.ofMillis(250), config.historyCache().stageBudget());
         assertEquals(Duration.ofMinutes(60), config.historyCache().ttl());
@@ -42,6 +45,44 @@ class ExternalServicesTest {
         config = read(values);
         assertEquals(ExternalServices.SslMode.DISABLED, config.mysql().sslMode());
         assertFalse(config.redis().tls());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ExternalServices.SslMode.class, names = {"REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"})
+    void explicitTlsConfigurationOverridesPlaintextDefaults(ExternalServices.SslMode mode) {
+        var values = valid();
+        values.put("managed.mysql.ssl-mode", mode.name());
+        values.put("managed.redis.tls", true);
+        var config = read(values);
+        assertEquals(mode, config.mysql().sslMode());
+        assertTrue(config.redis().tls());
+    }
+
+    @Test void composeEnvironmentNeedsNoExplicitPlaintextFlagsAndStillAllowsTlsOverride() {
+        var values = new HashMap<String, Object>();
+        values.put("MANAGED_MYSQL_HOST", "mysql");
+        values.put("MANAGED_MYSQL_SCHEMA", "talkweave_test");
+        values.put("MANAGED_MYSQL_USERNAME", "fixture");
+        values.put("MANAGED_MYSQL_PASSWORD", "synthetic-only");
+        values.put("MANAGED_REDIS_HOST", "redis");
+        values.put("MANAGED_REDIS_PASSWORD", "synthetic-only");
+        var environment = new MockEnvironment();
+        environment.getPropertySources().addFirst(new SystemEnvironmentPropertySource("systemEnvironment", values));
+        ConfigurationPropertySources.attach(environment);
+        var config = ExternalServices.read(environment);
+        assertEquals("mysql", config.mysql().host());
+        assertEquals("redis", config.redis().host());
+        assertEquals(3306, config.mysql().port());
+        assertEquals(6379, config.redis().port());
+        assertEquals(ExternalServices.SslMode.DISABLED, config.mysql().sslMode());
+        assertFalse(config.redis().tls());
+        assertTrue(config.historyCache().enabled());
+
+        values.put("MANAGED_MYSQL_SSLMODE", "VERIFY_IDENTITY");
+        values.put("MANAGED_REDIS_TLS", "true");
+        config = ExternalServices.read(environment);
+        assertEquals(ExternalServices.SslMode.VERIFY_IDENTITY, config.mysql().sslMode());
+        assertTrue(config.redis().tls());
     }
 
     @Test void redisMayBeOmittedOnlyWhenCacheIsDisabled() {

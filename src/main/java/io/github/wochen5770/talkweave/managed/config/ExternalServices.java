@@ -42,7 +42,7 @@ public record ExternalServices(Mysql mysql, Redis redis, @DefaultValue HistoryCa
 
     public record Mysql(String host, @DefaultValue("3306") int port, String schema,
                         String username, @DefaultValue("") String password,
-                        @DefaultValue("VERIFY_IDENTITY") SslMode sslMode,
+                        @DefaultValue("DISABLED") SslMode sslMode,
                         @DefaultValue("8") int poolSize,
                         @DefaultValue("3s") Duration connectTimeout,
                         @DefaultValue("3s") Duration socketTimeout,
@@ -65,7 +65,7 @@ public record ExternalServices(Mysql mysql, Redis redis, @DefaultValue HistoryCa
 
     public record Redis(String host, @DefaultValue("6379") int port, @DefaultValue("0") int database,
                         @DefaultValue("") String username, @DefaultValue("") String password,
-                        @DefaultValue("true") boolean tls) {
+                        @DefaultValue("false") boolean tls) {
         public Redis {
             endpoint(host, port, "redis");
             require(database >= 0, "redis.database");

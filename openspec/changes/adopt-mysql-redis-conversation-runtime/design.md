@@ -131,6 +131,8 @@ MySQL 路径和行为测试接管后，删除 `AssistantRuntime`、两个旧 run
 
 正式 Compose 仍仅包含应用服务，通过环境变量或受保护配置文件连接现成 MySQL/Redis；保留回环 8680、内部健康端口、只读根文件系统、受限权限和材料目录。示例列出 MySQL URL/schema/user/password、Redis endpoint/user/password/TLS、缓存配置和时区，不写真实值。准备 schema 的建表权限与日常运行最小权限说明分开；应用只初始化空的已指定 schema，不创建/删除 NAS 的数据库或用户。
 
+操作者在实际 NAS 部署后要求将常用选项变为默认：`ExternalServices` 缺省使用 MySQL SSL `DISABLED`、Redis TLS `false`，Dockerfile 缺省 `USER 0:0`，与官方 Compose 对齐。直接环境变量部署可省略这三项，不需要额外连接 YAML。TLS 默认在配置绑定层提供，不增加高优先级镜像 ENV 去覆盖显式 YAML；仍支持 `MANAGED_MYSQL_SSLMODE=VERIFY_IDENTITY`、`MANAGED_REDIS_TLS=true` 或相应 YAML。保留 `10001:10001` 账号及 `--user` / Compose `user` 覆盖；选择非 root 时须先准备匹配的私有材料/配置权限。镜像内材料目录归 root 且 0700，无递归宿主机 chmod/chown、777、特权模式或数据库权限放宽。CI 分别验证不传 `--user` 的默认身份和显式非 root 材料路径。
+
 将本地目录语义明确为私有材料，不再作为“备份业务数据库”的依据；数据库不可用诊断和 MySQL 备份由数据库检查替代本地 SQLite 文件检查，材料目录低磁盘检查仍只用于材料安全。历史 Redis ACL 限于项目键前缀与必要命令；不调用 `FLUSHALL`、`FLUSHDB`、`CONFIG SET` 或遍历其他项目键，TLS 校验失败不自动降级。
 
 测试通过显式连接配置使用已有外部真实 MySQL/Redis，记录并核对实际服务与客户端版本，不拉取或启动独立 MySQL/Redis 镜像，也不要求另建服务实例。隔离以操作者已授权的项目专用 schema、每次测试的合成数据范围和 Redis 随机子前缀实现；不得把已承载真实业务的库自动当成可重置夹具。单元测试不要求网络；集成测试须显式启用并指定连接配置和目标范围，默认不读取本地 NAS 凭据或生产配置，未配置时不自动连接。真实 SQL、锁与原子脚本仍须在实际引擎验证，不能用 SQLite/H2 或假实现替代证据。
@@ -147,6 +149,7 @@ MySQL 路径和行为测试接管后，删除 `AssistantRuntime`、两个旧 run
 
 ## Risks / Trade-offs
 
+- [可信内网默认无 TLS 与 root 扩大暴露后果] → 明确默认仅适用于受限可信 NAS 网络，保留显式 TLS/非 root 覆盖、只读根/禁额外能力的官方 Compose、受保护入口与材料权限；默认 root 不承诺绕过只读挂载或文件系统限制。
 - [误把新安装理解为清空旧数据] → 只操作专用空 MySQL schema 和新材料目录，旧路径无写入测试；不附带数据删除任务。
 - [新连接池暴露原全局锁掩盖的竞态] → 明确锁序、唯一键、条件转换，真实引擎验证并发领取、全局配额、同身份重认证和死锁失败边界。
 - [实例锁连接丢失与旧网络请求竞态] → 停止旧 epoch 调度，结果按原范围保守记账，不承诺撤回或 exactly-once 外部效果，禁止自动接管旧工作。
@@ -167,6 +170,6 @@ MySQL 路径和行为测试接管后，删除 `AssistantRuntime`、两个旧 run
 
 ## Open Questions
 
-- 已核验基线为 MySQL 8.0.44、Redis 7.2.12，Connector/J 9.6.0、HikariCP 6.3.3、Lettuce 6.6.0.RELEASE；命名锁和原子比较基础能力已验，不代表完整业务验收。操作者明确不启用 SSL，沿用本地 MySQL `DISABLED`、Redis `tls: false`，不改变公共模板安全默认值。后续需测量真实网络时延及完整业务兼容性，服务版本变化须重新记录。
+- 初始已核验基线为 MySQL 8.0.44、Redis 7.2.12，Connector/J 9.6.0、HikariCP 6.3.3、Lettuce 6.6.0.RELEASE；后续版本证据见 implementation-status.md。操作者最新要求将无 SSL 与 root 作为部署默认值，覆盖先前“仅本地配置无 SSL、公共默认不变”的约定，显式 TLS 仍可启用。后续仍需测量完整业务兼容性，服务版本变化须重新记录。
 - 缓存 TTL、单窗口字节上限、连接池大小和超时的最终值，在合成环境与授权的 NAS 测量后调整；默认值不是服务端资源保证。
 - NAS 项目专用资源的建表与合成数据/缓存读写已授权；真实微信/付费模型、覆盖式恢复仍待另外授权。无法安全执行的验收保留未完成，旧 change 的任务状态不因本次规划修订而改变。

@@ -15,9 +15,10 @@ ARG SOURCE_URL
 LABEL org.opencontainers.image.revision=$VCS_REF org.opencontainers.image.source=$SOURCE_URL
 WORKDIR /app
 RUN groupadd --gid 10001 assistant && useradd --uid 10001 --gid 10001 --no-create-home assistant \
-    && mkdir -p /app/materials /app/config && chown 10001:10001 /app/materials && chmod 700 /app/materials
+    && mkdir -p /app/materials /app/config && chown 0:0 /app/materials && chmod 700 /app/materials
 COPY --from=build /build/target/talkweave-0.1.0-SNAPSHOT.jar /app/assistant.jar
-USER 10001:10001
+# NAS default; --user / Compose user can select the retained assistant account instead.
+USER 0:0
 ENV MANAGED_MATERIALS_DIRECTORY=/app/materials EXTERNAL_SERVICES_CONFIG=/app/config/external-services.yml HEALTH_PORT=8081 ADMIN_ADDRESS=0.0.0.0
 EXPOSE 8680
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

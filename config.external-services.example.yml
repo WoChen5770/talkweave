@@ -17,10 +17,9 @@ managed:
     schema: ''                 # 必填：本项目专用的已有空库名
     username: ''               # 必填：仅授权本项目 schema 的账号
     password: ''               # 在本地填写，不提交、不分享
-    # 按现有服务选择：VERIFY_IDENTITY 验证证书和主机名；
-    # 仅确认是可信内网且服务未启用 TLS 时，才显式填写 DISABLED。
-    # 不会因证书错误自动降低安全级别。自签 CA 的信任配置接入时另行确认。
-    ssl-mode: 'DISABLED'        # 当前明确选择不启用 SSL；仅限受信任网络
+    # 默认 DISABLED，省略本项也不启用 SSL，仅限可信受限内网。
+    # 需要 TLS 时显式选 VERIFY_IDENTITY 并配置可信 CA/主机名；证书错误不会自动降级。
+    ssl-mode: 'DISABLED'        # 可省略；环境变量为 MANAGED_MYSQL_SSLMODE
     pool-size: 8
     connect-timeout: 3s
     socket-timeout: 3s
@@ -32,7 +31,7 @@ managed:
     database: 0                # 当前选定逻辑库；项目隔离仍依赖键前缀和 ACL
     username: 'default'        # 有专用 ACL 账号则填写其名称
     password: ''               # 在本地填写
-    tls: false                 # 当前明确选择不启用 TLS；仅限受信任网络
+    tls: false                 # 默认 false，可省略；仅限受信任网络
 
   history-cache:
     enabled: true              # false 关闭缓存，MySQL 仍必需

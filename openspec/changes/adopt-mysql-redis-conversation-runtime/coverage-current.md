@@ -61,12 +61,12 @@ CI 新证据：[run 36723091054](https://github.com/WoChen5770/talkweave/actions
 
 | Scenario | 当前证据 | 状态 |
 | --- | --- | --- |
-| Reuse existing NAS services | 外部 IT 显式无 SSL 直连；Compose 仅应用；WorkflowContractTest | 本机已验，双架构镜像待验 |
+| Reuse existing NAS services | 外部 IT 显式无 SSL 直连；Compose 仅应用；ExternalServicesTest 新增省略 SSL/TLS 的环境变量绑定与显式 TLS 覆盖；WorkflowContractTest | 本机已验，新默认的双架构镜像待验 |
 | Missing endpoint versus temporarily unavailable Redis | ExternalServicesTest 缺失值拒绝；ExternalRedisIT 应用侧故障；浏览器展示 DEGRADED 且 RUNNING | 已验 |
 | Other applications share Redis and MySQL | 目标审批/空业务保护/独占 fixture；精确主键清理、有限 TTL 子键；无全局命令 | 授权范围验证已验；未探查其他项目数据 |
 | Authentication or certificate error | 配置/驱动无透明重连、不自动关闭 TLS/公钥校验；错误脱敏回归。当前操作者选择无 SSL | 无 SSL 已验；真实 TLS 证书故障未运行 |
 | First start and subsequent restart | AdminApiIT 初始化/不重置；MySQL 重开；合成浏览器登录与设置持久化 | 本机已验 |
-| Restricted runtime identity | ManagedMaterialsTest、PrivateStateFilesTest、独立 probe；CI 两架构无网络正式镜像材料权限检查，不使用 777 | macOS 与 CI 离线 root/non-root 已验；完整应用运行待验 |
+| Restricted runtime identity | ManagedMaterialsTest、PrivateStateFilesTest、独立 probe；先前 CI 两架构 root/non-root 材料检查；新镜像默认 0:0、保留显式非 root，契约与烟测接线更新，不使用 777 | macOS 与先前 CI 离线已验；新默认镜像及完整应用运行另验 |
 | Redis fails but MySQL is available | 浏览器 RUNNING + DEGRADED；真实缓存故障 benchmark；管理诊断/内部健康边界 | 已验 |
 | Stop with in-flight remote work | ManagedShutdownTest 统一预算；RuntimeManagerIT 不合作在途模型 <8s、迟到结果 UNKNOWN；浏览器整进程停止约0.82s | 本机已验；容器停止待验 |
 | Restore a new deployment | 安全备份与回滚文档；未获覆盖目标授权，没有实际恢复 | **待验（8.5）** |

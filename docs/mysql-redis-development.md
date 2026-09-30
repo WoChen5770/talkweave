@@ -2,6 +2,8 @@
 
 当前唯一生产路径为 managed + MySQL，可选 Redis 历史缓存。旧单用户/SQLite 已退役，不能用旧 profile 或 `assistant.enabled` 恢复。使用 Java 21；生产包、诊断包、真实引擎验证和容器验收分别记录。
 
+NAS 默认值在代码中统一为 MySQL SSL `DISABLED`、Redis TLS `false`，镜像默认 `USER 0:0`，与官方 Compose 一致。`ExternalServicesTest` 验证省略配置及环境变量绑定、显式 TLS 覆盖；镜像烟测验证默认 root 和显式 `10001:10001`，不取消私有材料权限或只读根检查。默认值仅面向可信受限内网，不作为证书失败后的自动回退。
+
 ## 无外部数据服务的单元回归
 
 ```sh

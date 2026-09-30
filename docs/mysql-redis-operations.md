@@ -20,14 +20,36 @@
 
 1. 保存旧镜像摘要、旧配置和原独立数据；不要挂载、改名或删除旧 SQLite、`login/`、旧布局文件。新版本不导入旧管理员、用户或聊天。
 2. 在独立部署目录准备当前 `compose.yml`、`.env.example` 和 `config.external-services.example.yml`。复制配置模板为私有 `config/external-services.local.yml`，填写专用 MySQL/Redis 连接；配置目录 `0700`、文件 `0600`，不得提交 Git 或放入镜像。不要展示 `docker compose config`、inspect 或完整环境输出。
-3. 准备新的 `materials` 目录，设置为实际运行 UID/GID 所有、`0700`。它仅保存安装标记和短期二维码等私有材料，不是业务数据库备份。Compose 默认 `0:0`；可设置 `ASSISTANT_UID` / `ASSISTANT_GID` 使用专用非 root 身份，配置文件也必须可读。不要使用 `777`、privileged、Docker socket、递归修改共享目录来解决权限问题。缺失挂载源不会自动创建。
+3. 准备新的 `materials` 目录，设置为实际运行 UID/GID 所有、`0700`。它仅保存安装标记和短期二维码等私有材料，不是业务数据库备份。镜像和 Compose 均默认 `0:0`，自定义 Compose 不写 `user` 也以 root 运行；可通过 `user: "10001:10001"`（官方 Compose 用 `ASSISTANT_UID` / `ASSISTANT_GID`）覆盖为非 root，材料及配置须匹配其权限。默认 root 不会自动修复只读挂载、文件系统限制或递归改动已有目录归属。不要使用 `777`、privileged、Docker socket、递归修改共享目录来解决权限问题。官方 Compose 缺失挂载源不会自动创建。
 4. 在私有 `.env` 配置 `ASSISTANT_HOST_MATERIALS`、`EXTERNAL_SERVICES_CONFIG`、初始管理员用户名及唯一强密码（12–72 个 UTF-8 字节，无控制字符）。模型 Key 后续在受认证管理页面设置，微信身份不能通过手填 YAML 授权。
-5. 操作者明确要求无 SSL 时，使用 MySQL `ssl-mode: DISABLED`、Redis `tls: false`；当前示例遵循这一选择。两条链路为明文，只能用于操作者信任的受限网络。代码缺省仍校验证书；若选 TLS，证书错误会失败，不会自动降级、跳过校验或开启公钥自动获取。需要启用 TLS 时先准备受信任 CA/主机名和客户端信任设置。
+5. 按操作者选择，代码和示例现在默认 MySQL `ssl-mode: DISABLED`、Redis `tls: false`，省略这两项仍为明文，仅限可信受限内网。需要 TLS 时显式设置 MySQL `VERIFY_IDENTITY` / Redis `true`，并准备受信任 CA/主机名和客户端信任设置；显式选择不会被默认值覆盖，证书错误不会自动降级、跳过校验或开启公钥自动获取。这是新镜像的默认值，旧容器仍需原先的显式配置。
 6. 确认对应提交的 CI 发布成功，建议将 Compose `image` 从滚动 `latest` 固定到该次正式发布的确定摘要（发布 job 的 summary / `published-manifest` 产物可查），再由操作者部署并完成下方 NAS 待验项。不要把旧缓存的 `latest` 当成当前提交。应用会初始化空专用库，或打开精确识别的布局；配置缺失、未知布局、旧材料会提前失败。不要通过删表、删标记或降版本来绕过拒绝。
 
 管理端默认仅发布 `127.0.0.1:8680`，内部健康 8081 不发布。通过 SSH 隧道访问，例如 `ssh -N -L 18680:127.0.0.1:8680 用户@NAS`，再打开 `http://127.0.0.1:18680`。使用受控 HTTPS/VPN 入口时保持 Host/Origin 一致，HTTPS 才设置 `ADMIN_COOKIE_SECURE=true`；不开放任意跨域。
 
 首次登录后移除 `.env` 的 `ADMIN_INIT_PASSWORD` 及旧预览变量 `ADMIN_INITIAL_PASSWORD`，再由操作者重建应用容器移除环境中的秘密。已初始化管理员不会被残留变量重置。新库重新设置模型、开通用户；新增用户和保存模型不会发出真实调用，点击绑定和启用对话会，必须有对应授权。
+
+## 精简环境变量配置
+
+自定义 Compose 可以只用 `environment` 提供连接信息，不要求连接 YAML 或 `.env` 文件。保留应用镜像和新的 `./materials:/app/materials` 挂载；不要复用旧 `data`。以下环境变量块放在应用服务下面，替换占位值，不把真实密码提交到仓库：
+
+```yaml
+environment:
+  ADMIN_INIT_USERNAME: admin
+  ADMIN_INIT_PASSWORD: '填写唯一强密码，12–72个UTF-8字节'
+  MANAGED_MYSQL_HOST: '填写容器可访问的MySQL地址'
+  MANAGED_MYSQL_SCHEMA: 'talkweave'
+  MANAGED_MYSQL_USERNAME: 'talkweave'
+  MANAGED_MYSQL_PASSWORD: '填写MySQL密码'
+  MANAGED_REDIS_HOST: '填写容器可访问的Redis地址'
+  MANAGED_REDIS_PASSWORD: '填写Redis密码'
+```
+
+默认 MySQL 端口 3306、Redis 端口 6379、Redis database 0、缓存开启、时区 Asia/Shanghai；需要时分别加 `MANAGED_MYSQL_PORT`、`MANAGED_REDIS_PORT`、`MANAGED_REDIS_DATABASE`、`MANAGED_HISTORYCACHE_ENABLED`、`CONVERSATION_TIME_ZONE`。Redis 默认不指定用户名，仅密码认证；使用命名 ACL 用户时加 `MANAGED_REDIS_USERNAME`。地址可为同一 Docker 网络中的容器名及内部端口，或 NAS IP 及发布端口，不能用容器的 `127.0.0.1` 代表 NAS。
+
+无 SSL 时不必再写 `MANAGED_MYSQL_SSLMODE`、`MANAGED_REDIS_TLS`；使用镜像默认 root 时也不必写服务级 `user`。需要覆盖时，TLS 的变量名是 `MANAGED_MYSQL_SSLMODE`（不是 `SSL_MODE`）和 `MANAGED_REDIS_TLS`，非 root 身份则在服务级写 `user`，不是环境变量。容器 `ENV` 中不硬编码 TLS 默认值，避免其优先级意外覆盖私有 YAML 的显式 TLS 选择。
+
+更新镜像需先 pull 后重新创建容器，修改环境变量或 `user` 后也需重新创建，仅 restart 不生效。保留原材料目录和 MySQL 数据，勿以删表或重置管理员来更新默认值。环境变量对 Docker 管理者可见；含密码的 Compose 不分享、不上传，管理端口仅开放到受控网络，不映射公网。
 
 ## 会话、缓存与诊断
 

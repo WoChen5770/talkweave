@@ -19,7 +19,7 @@ java -Dloader.path=.build-cache/mysql-runtime-verify/talkweave-mysql-candidate-d
 
 没有覆盖输出参数时仍使用 `target/talkweave-0.1.0-SNAPSHOT{,-diagnostics}.jar`。本地依赖缓存可通过 `-Dmaven.repo.local=...` 指定；macOS 安全测试需要时，在 JVM 启动前设置 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp`，不放宽生产路径的符号链接拒绝。
 
-`ManagedContainerProbe` 只支持三个离线模式：`--artifact <正式JAR>` 检查当前 MySQL/健康组件、拒绝旧实现/迁移资源/诊断入口/夹具；`--materials <新子目录>` 验证私有材料初始化与重开；`--legacy <新子目录>` 创建合成旧文件并验证拒绝后无修改。后两者拒绝已存在的目标目录，不能指向真实数据。容器烟测 `scripts/ci/image-smoke.sh <image> <platform> <diagnostics.jar>` 在无网络、只读根环境中运行这些模式，分别检查 root/non-root，明确输出 `externalServices=NOT_RUN`；它不代表管理员、外部服务、在途停止或两架构运行验收通过。
+`ManagedContainerProbe` 只支持三个离线模式：`--artifact <正式JAR>` 检查当前 MySQL/健康组件、拒绝旧实现/迁移资源/诊断入口/夹具；`--materials <新子目录>` 验证私有材料初始化与重开；`--legacy <新子目录>` 创建合成旧文件并验证拒绝后无修改。后两者拒绝已存在的目标目录，不能指向真实数据。容器烟测 `scripts/ci/image-smoke.sh <image> <platform> <diagnostics.jar>` 在无网络、只读根环境中运行这些模式，验证默认 `0:0` 与显式 `--user 10001:10001` 两种身份及材料权限，明确输出 `externalServices=NOT_RUN`；它不代表管理员、外部服务、在途停止或两架构运行验收通过。
 
 ## 微信与模型诊断（必须单独授权）
 

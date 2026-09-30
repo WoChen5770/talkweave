@@ -9,9 +9,11 @@
 
 本 change 的实施与集成测试 SHALL 同样通过显式配置连接已有外部服务，MUST 不以拉取或部署独立 MySQL/Redis 镜像作为前提。操作者明确选择不启用 SSL 时 SHALL 遵循该配置；TLS 失败时 MUST 不自动降级。
 
+按操作者明确要求，可信 NAS 内网部署的代码默认值 SHALL 为 MySQL SSL `DISABLED`、Redis TLS `false`，镜像默认 UID/GID SHALL 为 `0:0`，不要求自定义 Compose 重复声明。连接信息 SHALL 支持直接环境变量配置且不强制额外挂载连接 YAML；显式 TLS 和非 root `user` SHALL 可覆盖默认值，默认值 MUST 不覆盖已显式配置的 TLS，不取消认证、秘密脱敏、材料私有权限或非法配置拒绝。
+
 #### Scenario: Reuse existing NAS services
 - **WHEN** 操作者配置现有服务端点与专用资源
-- **THEN** 应用及显式启用的集成测试直接使用授权范围内的外部服务，不新增数据库容器或要求拉取数据库镜像，不要求宿主机全局改时区或升级服务，不对外发布 MySQL/Redis 端口
+- **THEN** 应用及显式启用的集成测试直接使用授权范围内的外部服务；仅配置必需连接参数时，应用采用无 SSL/TLS 的可信内网默认值，显式 TLS 配置仍生效；不新增数据库容器或要求拉取数据库镜像，不要求宿主机全局改时区或升级服务，不对外发布 MySQL/Redis 端口
 
 #### Scenario: Missing endpoint versus temporarily unavailable Redis
 - **WHEN** MySQL 配置缺失、缓存启用但 Redis 配置缺失，或配置完整的 Redis 暂时不可达
@@ -38,7 +40,7 @@ MySQL 操作 MUST 限于本应用已识别的专用 schema，Redis 操作 MUST �
 - **THEN** 首次无有效管理员秘密时拒绝开放管理；已初始化后原管理员和 MySQL 业务保留，重启不要求重新创建所有账号
 
 #### Scenario: Restricted runtime identity
-- **WHEN** 操作者使用现有 Compose 默认 `0:0` 或覆盖为拥有材料目录权限的非 root UID/GID
+- **WHEN** 操作者省略 `user` 使用镜像默认 `0:0`、使用官方 Compose 默认身份，或覆盖为拥有材料目录权限的非 root UID/GID
 - **THEN** 私有材料仍受限，权限不足明确失败，不使用 `777`、特权模式或递归更改宿主机目录权限
 
 ### Requirement: Restricted ingress and bounded lifecycle
