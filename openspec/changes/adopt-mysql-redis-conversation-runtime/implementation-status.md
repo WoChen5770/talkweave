@@ -1,8 +1,17 @@
 # 实施记录（2026-09-30）
 
-交付方式补充：本机验收后，操作者决定在 NAS 试部署阶段继续验证剩余项目，并授权提交、推送当前代码。下方“未提交/推送”描述保留为各次验收时的历史状态；此次源码推送不等于镜像发布或部署验收完成，进度仍为 39/45，发布门禁与私有配置隔离不变。
+交付方式补充：操作者已授权提交推送，并明确选择“构建就正式发布”，剩余 NAS 验收在部署后继续。下方“未提交/推送”“发布保持阻断”等描述保留为各阶段历史状态，以本节最新策略为准；完整 change 仍为 39/45，私有配置隔离不变。
 
-## 最终本机合成验收与外部阻碍（2026-09-30，当前）
+## 构建通过后正式发布（2026-09-30，当前）
+
+- 上次推送为 `2680ced1ce07937a662177f6cab5a7f546723582`。[GitHub Actions 36723091054](https://github.com/WoChen5770/talkweave/actions/runs/36723091054) 的 verify 成功；amd64 原生与 arm64 QEMU 均完成镜像构建（237 Java 测试通过）及无网络正式产物、root/non-root 材料权限检查。两个 build job 只在原来的 `Require external-service runtime acceptance before publication` 固定失败步骤退出，发布 job 未执行。不是应用编译失败，也不是此前本机 Docker Hub 连接失败。
+- 根据操作者的新发布决定，移除该固定阻断步骤，保留工作流/脚本、Java/Node、两架构构建及离线产物/材料检查的实际失败保护。默认分支（main）推送正式发布 `latest` + `sha-<完整提交>`，`v*` 推送发布对应版本 + 提交标签；PR/其他分支只验证，手动发布需在允许 ref 显式选择。
+- 发布沿用同次已检查镜像归档，验证 checksum 后加载、推送单架构 digest，再组合双架构 manifest；不重新构建。独立外部集成与 NAS 验收不作为发布前置条件，未请求/未运行仍如实记为跳过或 `NOT_RUN`。新规则已同步 proposal/design/spec/tasks、开发/运维文档与 WorkflowContractTest。
+- 本轮本地验证：Java `verify` **238 tests / 29 suites，0 failure/error/skip**（WorkflowContractTest 9 项，含实际 Bash 发布决策矩阵），Node **14/14**，actionlint **1.7.7**、两个 CI 脚本 `bash -n`、OpenSpec strict 和 `git diff --check` 通过。只改 CI/契约测试/文档，未重新访问外部数据服务。
+- 本轮发布结果应以对应新提交的 Actions `publish-manifest` job 为准；本记录不预先声称发布成功。不会自动部署 NAS，不改变 MySQL SSL DISABLED / Redis TLS false，不上传私有连接配置，不执行真实扫码/付费模型或覆盖恢复。
+- 剩余 **2.3、4.6、7.4、7.5、8.4、8.5** 保持未完成。7.5 的双架构离线 root/non-root 检查现已有 CI 证据，但外部引导/缓存退化仍待验；8.4 的构建障碍已由 GitHub CI 解除，实际外部读写和容器在途停止仍待验。没有把策略调整或离线通过当成完整运行验收。
+
+## 最终本机合成验收与外部阻碍（2026-09-30，发布策略调整前）
 
 当前 **39/45**。本节及 [51 场景当前覆盖](coverage-current.md)、[性能报告](performance.md) 优先于下方所有历史阶段状态。后续新增完成有界长历史、缓存窗口/故障/并发、统一关闭预算、有效安全测试替代、性能及实际浏览器验收；不代表整个 change 或部署发布完成。旧 `add-multi-user-wechat-admin` 的状态未改，也未同步、归档、提交、推送或发布。
 

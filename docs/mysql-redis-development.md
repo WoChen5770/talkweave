@@ -44,13 +44,15 @@ mvn -Pexternal-services \
 
 性能测试单独选择 `-Dtest=HistoryBenchmarkIT`，沿用上述授权参数；调参对照再加 `-Dtalkweave.benchmark.tuned=true`。已完成 100/1000/10000 轮 × 并发 1/4 × 直读/冷/热/故障的 24 组及 2 组调参。热命中正文查询为零，但没有稳定整轮加速；完整方法、p50/p95、查询量和环境限制见 [性能报告](../openspec/changes/adopt-mysql-redis-conversation-runtime/performance.md)。不要把基准与其他独占夹具同时运行。
 
-## CI 与镜像：当前发布被阻断
+## CI 与镜像：检查通过后正式发布
 
 `.github/workflows/container.yml` 执行 Java/Node 单元、独立诊断构建、amd64/arm64 应用镜像构建。`scripts/ci/image-smoke.sh` 显式加载 diagnostics JAR，以无网络方式检查正式产物和两种 UID 材料权限；结果明确为 `externalServices=NOT_RUN`，不是管理员/数据库/缓存运行验收。
 
-发布分支在镜像导出之前有显式失败门禁，不得删除门禁以让流水线变绿。已加入独立手动 `external-integration` job，只允许默认分支的显式 dispatch，并使用同名受保护 GitHub Environment。操作者须另行配置环境审批、秘密 `EXTERNAL_SERVICES_YAML` 及变量 `APPROVED_MYSQL_SCHEMA`、`APPROVED_REDIS_PREFIX`、`EXPECTED_MYSQL_VERSION`、`EXPECTED_REDIS_VERSION`；不能直接上传开发机配置。目标必须允许独占空业务合成测试及初建/已识别升级。缺少配置会失败，fork PR 不接触这些秘密。
+操作者已明确选择“构建就正式发布”：默认分支（当前 `main`）推送在 Java/Node、工作流/脚本校验及两架构构建/离线镜像检查全部成功后，发布 GHCR 的 `latest` 和 `sha-<完整提交>`；`v*` 标签发布对应版本标签及提交标签，不改 `latest`。PR 和其他分支只验证。手动执行默认不发布，只有显式勾选 `publish` 且位于默认分支或 `v*` 标签时才发布。镜像导出不再因外部/NAS 待验项固定失败；任何必需构建或检查失败仍禁止发布。发布阶段校验并加载同次已检查的镜像归档，以两架构 registry digest 合成 manifest，不重新构建。
 
-`scripts/ci/external-services.sh` 仅供 GitHub-hosted 临时 runner：先执行无外部服务单元测试预热依赖，再将出站限制为明确的 MySQL/Redis IPv4 地址与端口及回环合成端点，离线执行 IT，最后只移除本次防火墙链和临时文件。当前隔离入口要求数字 IPv4；默认预算的 Redis 断连代理测试遵循本次无 SSL 配置，不代表 TLS 故障验证。**不要在开发机/NAS 执行此防火墙脚本。** 没有新增数据库镜像，未实际配置或运行 GitHub 环境；正式镜像外部运行阶段仍未闭合，7.4/7.5 保持未完成。未来发布只能使用同次验收的镜像，不另行构建替代品。
+独立手动 `external-integration` job 不作为正式发布前置条件；它只允许默认分支的显式 dispatch，并使用同名受保护 GitHub Environment。操作者须另行配置环境审批、秘密 `EXTERNAL_SERVICES_YAML` 及变量 `APPROVED_MYSQL_SCHEMA`、`APPROVED_REDIS_PREFIX`、`EXPECTED_MYSQL_VERSION`、`EXPECTED_REDIS_VERSION`；不能直接上传开发机配置。目标必须允许独占空业务合成测试及初建/已识别升级。主动请求集成却缺少配置仍会失败，未请求则明确跳过，均不会被冒充为外部验收通过；fork PR 不接触这些秘密。
+
+`scripts/ci/external-services.sh` 仅供 GitHub-hosted 临时 runner：先执行无外部服务单元测试预热依赖，再将出站限制为明确的 MySQL/Redis IPv4 地址与端口及回环合成端点，离线执行 IT，最后只移除本次防火墙链和临时文件。当前隔离入口要求数字 IPv4；默认预算的 Redis 断连代理测试遵循本次无 SSL 配置，不代表 TLS 故障验证。**不要在开发机/NAS 执行此防火墙脚本。** 没有新增数据库镜像，未实际配置或运行 GitHub 外部集成环境；正式镜像外部运行阶段仍未闭合，7.4/7.5 保持未完成。NAS 验收由操作者部署后继续，发布本身不会将待验项勾选完成。
 
 两架构必须分别记录运行成功/失败/未运行以及原生/QEMU；当前本机 JAR 和真实数据库测试不能代替正式镜像或 NAS 实机。镜像摘要只记录实际构建值，不预填。
 

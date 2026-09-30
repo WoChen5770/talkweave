@@ -123,6 +123,7 @@ jobs:
           retention-days: 14
 
   build:
+    # Build/offline checks gate official publication; external/NAS acceptance is tracked separately.
     needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -191,11 +192,6 @@ jobs:
           ARCH: ${{ matrix.arch }}
           PLATFORM: ${{ matrix.platform }}
         run: bash scripts/ci/image-smoke.sh "ci-assistant:$ARCH" "$PLATFORM" diagnostics/talkweave-0.1.0-SNAPSHOT-diagnostics.jar
-      - name: Require external-service runtime acceptance before publication
-        if: needs.verify.outputs.publish == 'true'
-        run: |
-          echo 'Publication blocked: external MySQL/Redis and both target-architecture runtime acceptance require a separately authorized CI target.' >&2
-          exit 1
       - name: Export the tested image (publication runs only)
         if: needs.verify.outputs.publish == 'true'
         env:
@@ -309,8 +305,9 @@ jobs:
           jq -e '[.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]' manifest.json
           docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA" > manifest.txt
           {
-            printf '## Verified multi-platform image\n\n`%s:sha-%s`\n\n' "$IMAGE" "$GITHUB_SHA"
-            printf 'amd64: native CI; arm64: QEMU on amd64. NAS acceptance remains operator-owned.\n\n```text\n'
+            printf '## Published official multi-platform image\n\n`%s:sha-%s`\n\n' "$IMAGE" "$GITHUB_SHA"
+            printf 'Required build, unit and offline artifact/materials checks passed. amd64: native CI; arm64: QEMU on amd64.\n\n'
+            printf 'External-service and NAS runtime acceptance are separate and are not implied by publication.\n\n```text\n'
             cat manifest.txt
             printf '\n```\n'
           } >> "$GITHUB_STEP_SUMMARY"

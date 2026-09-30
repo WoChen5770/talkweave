@@ -2,7 +2,9 @@
 
 本文件取代 `coverage.md` 下半部的早期规划状态。历史执行记录保留在 `implementation-status.md`；没有修改旧 change 的任务。
 
-“已验”指本机 Java 21 + 显式外部 MySQL 8.0.46 / Redis 7.4.9 的合成证据，不代表真实微信、付费模型、Linux 容器或备份恢复通过。所有外部测试只用已授权 schema、独占空业务夹具与随机 TTL 子键；不清表、不重置序号、不停止共享服务。
+除单独标注 CI 的条目外，“已验”指本机 Java 21 + 显式外部 MySQL 8.0.46 / Redis 7.4.9 的合成证据，不代表真实微信、付费模型、Linux 容器完整运行或备份恢复通过。所有外部测试只用已授权 schema、独占空业务夹具与随机 TTL 子键；不清表、不重置序号、不停止共享服务。
+
+CI 新证据：[run 36723091054](https://github.com/WoChen5770/talkweave/actions/runs/36723091054)，提交 `2680ced1ce07937a662177f6cab5a7f546723582`。Java/Node、两架构镜像构建和离线 root/non-root 材料检查通过；job 最终失败仅来自原来的固定发布阻断步骤，未发布镜像。操作者现已改为必需构建/检查通过即可正式发布，外部/NAS 待验不再阻止发布；此规则变化不改变下方未完成项。
 
 ## conversation-history-cache（13）
 
@@ -64,19 +66,19 @@
 | Other applications share Redis and MySQL | 目标审批/空业务保护/独占 fixture；精确主键清理、有限 TTL 子键；无全局命令 | 授权范围验证已验；未探查其他项目数据 |
 | Authentication or certificate error | 配置/驱动无透明重连、不自动关闭 TLS/公钥校验；错误脱敏回归。当前操作者选择无 SSL | 无 SSL 已验；真实 TLS 证书故障未运行 |
 | First start and subsequent restart | AdminApiIT 初始化/不重置；MySQL 重开；合成浏览器登录与设置持久化 | 本机已验 |
-| Restricted runtime identity | ManagedMaterialsTest、PrivateStateFilesTest、独立 probe；不使用 777 | macOS 已验；Linux root/non-root 待镜像 |
+| Restricted runtime identity | ManagedMaterialsTest、PrivateStateFilesTest、独立 probe；CI 两架构无网络正式镜像材料权限检查，不使用 777 | macOS 与 CI 离线 root/non-root 已验；完整应用运行待验 |
 | Redis fails but MySQL is available | 浏览器 RUNNING + DEGRADED；真实缓存故障 benchmark；管理诊断/内部健康边界 | 已验 |
 | Stop with in-flight remote work | ManagedShutdownTest 统一预算；RuntimeManagerIT 不合作在途模型 <8s、迟到结果 UNKNOWN；浏览器整进程停止约0.82s | 本机已验；容器停止待验 |
 | Restore a new deployment | 安全备份与回滚文档；未获覆盖目标授权，没有实际恢复 | **待验（8.5）** |
-| Publish evidence for both target architectures | Docker 29.5.2 可用；正式 arm64 构建两次在 Docker Hub 认证连接重置失败；amd64 未运行 | **待验，发布仍阻断** |
+| Publish evidence for both target architectures | 上述 CI 已完成 amd64 原生、arm64 QEMU 构建及离线产物/材料检查；外部服务阶段未运行，不能算完整运行通过 | 构建/离线已验；正式发布按新规则，外部/NAS 仍待验 |
 
 ## runtime-simplification（5）
 
 | Scenario | 当前证据 | 状态 |
 | --- | --- | --- |
 | Attempt to use legacy configuration | FoundationContextTest、WorkflowContractTest，新依赖缺失失败，没有旧 profile 回退 | 已验 |
-| Inspect the production artifact | 独立 ManagedContainerProbe 检查实际候选 JAR，拒绝旧 SQL/SQLite/授权入口/夹具/诊断 | JAR 已验；镜像待验 |
-| Run CI or an operator diagnostic | 独立 diagnostics JAR、合成探针；受保护独立 CI 外部阶段与未验收发布门禁 | 本机已验，CI 外部/正式镜像未运行 |
+| Inspect the production artifact | 独立 ManagedContainerProbe 检查实际候选 JAR 和 CI 两架构镜像，拒绝旧 SQL/SQLite/授权入口/夹具/诊断 | JAR 与镜像离线检查已验 |
+| Run CI or an operator diagnostic | 独立 diagnostics JAR、合成探针；CI 双架构离线检查；外部阶段受保护且独立于发布 | 本机/CI 离线已验；CI 外部及正式镜像外部运行待验 |
 | Replace SQLite-specific tests | 下方退役映射；MySQL 真实仓储、状态机、所有权与恢复覆盖 | 已验；2.3 实际破坏性布局另列 |
 | Review cleanup and documentation | 活跃 MySQL/Redis 开发/运维文档、旧资料历史标记、当前覆盖/性能/未运行报告 | 已完成 |
 

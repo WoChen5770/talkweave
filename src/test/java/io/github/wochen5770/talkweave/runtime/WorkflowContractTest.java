@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.LoaderOptions;
@@ -43,6 +44,41 @@ class WorkflowContractTest {
             }
         }
     }
+    @Test void publicationPolicyAllowsOnlyRequestedDefaultBranchOrVersionTags() throws Exception {
+        var workflow = yaml(".github/workflows/container.yml");
+        var triggers = map(workflow.get("on"));
+        assertThat(map(triggers.get("push"))).containsEntry("branches", List.of("**"))
+                .containsEntry("tags", List.of("v*"));
+        var inputs = map(map(triggers.get("workflow_dispatch")).get("inputs"));
+        assertThat(map(inputs.get("publish"))).containsEntry("default", false);
+        assertThat(map(inputs.get("external_integration"))).containsEntry("default", false);
+        var target = steps(jobs().get("verify")).stream()
+                .filter(step -> "target".equals(step.get("id"))).findFirst().orElseThrow();
+        assertThat(map(target.get("env"))).containsEntry("REQUEST_PUBLISH",
+                "${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}");
+        // Exercise the actual decision fragment; repository lowercasing below it requires Bash 4+.
+        String script = target.get("run").toString();
+        String decision = script.substring(0, script.indexOf("image_repository=")) + "printf '%s' \"$publish\"\n";
+        for (String defaultBranch : List.of("main", "release")) {
+            for (String ref : List.of("refs/heads/" + defaultBranch, "refs/tags/v1.2.3",
+                    "refs/heads/feature/test", "refs/heads/v1.2.3", "refs/tags/test", "refs/pull/42/merge")) {
+                for (boolean requested : List.of(false, true)) {
+                    var builder = new ProcessBuilder("bash", "-c", decision).redirectErrorStream(true);
+                    builder.environment().putAll(Map.of("DEFAULT_BRANCH", defaultBranch,
+                            "GITHUB_REF", ref, "REQUEST_PUBLISH", Boolean.toString(requested)));
+                    var process = builder.start();
+                    try {
+                        assertThat(process.waitFor(5, TimeUnit.SECONDS)).isTrue();
+                        assertThat(process.exitValue()).isZero();
+                        boolean expected = requested && (ref.equals("refs/heads/" + defaultBranch) || ref.startsWith("refs/tags/v"));
+                        assertThat(new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+                                .as("requested=%s ref=%s default=%s", requested, ref, defaultBranch)
+                                .isEqualTo(Boolean.toString(expected));
+                    } finally { process.destroyForcibly(); }
+                }
+            }
+        }
+    }
     @Test void bothArchitecturesAreLoadedAndCheckedBeforeExport() throws Exception {
         var build = map(jobs().get("build"));
         var matrix = map(map(build.get("strategy")).get("matrix"));
@@ -58,6 +94,7 @@ class WorkflowContractTest {
     }
     @Test void publishDependsOnAllTestsAndTransfersOnlyTestedImages() throws Exception {
         var jobs = jobs();
+        assertThat(map(jobs.get("build")).get("needs")).isEqualTo("verify");
         var publish = map(jobs.get("publish-images"));
         assertThat((List<String>)publish.get("needs")).containsExactlyInAnyOrder("verify", "build");
         var manifest = map(jobs.get("publish-manifest"));
@@ -69,6 +106,19 @@ class WorkflowContractTest {
         }
         assertThat(steps(publish).toString()).contains("docker load", "sha256sum -c", "docker push");
         assertThat(steps(manifest).toString()).contains("for arch in amd64 arm64", "imagetools create", "manifest.json");
+        assertThat(steps(manifest).toString()).contains("$IMAGE:sha-$GITHUB_SHA", "$IMAGE:latest",
+                "$IMAGE:$GITHUB_REF_NAME", "External-service and NAS runtime acceptance are separate");
+        for (String id : List.of("verify", "build", "publish-images", "publish-manifest")) {
+            var job = map(jobs.get(id));
+            assertThat(job).doesNotContainKey("continue-on-error");
+            for (var step : steps(job)) {
+                assertThat(step).doesNotContainKey("continue-on-error");
+                // Only evidence uploads may run after failure, never builds, checks or publication.
+                if (step.containsKey("if") && step.get("if").toString().contains("always()")) {
+                    assertThat(step.get("uses").toString()).startsWith("actions/upload-artifact@");
+                }
+            }
+        }
     }
     @Test void offlineSmokeUsesExplicitDiagnosticsAndCannotClaimRuntimeAcceptance() throws Exception {
         String smoke = Files.readString(Path.of("scripts/ci/image-smoke.sh"));
@@ -78,13 +128,11 @@ class WorkflowContractTest {
                         "offlineArtifactAndMaterials=PASS", "externalServices=NOT_RUN")
                 .doesNotContain("MODEL_API_KEY", "WECHAT_BOT_ID", "config/application.yml", "ContainerStorageProbe", "\r");
         var buildSteps = steps(jobs().get("build"));
-        var gate = buildSteps.stream().filter(step -> step.getOrDefault("name", "").toString()
-                .equals("Require external-service runtime acceptance before publication")).findFirst().orElseThrow();
-        assertThat(gate.get("if")).isEqualTo("needs.verify.outputs.publish == 'true'");
-        assertThat(gate.get("run").toString()).contains("Publication blocked", "exit 1");
-        assertThat(buildSteps.indexOf(gate)).isLessThan(buildSteps.indexOf(buildSteps.stream()
-                .filter(step -> step.getOrDefault("run", "").toString().contains("docker save")).findFirst().orElseThrow()));
-        assertThat(buildSteps.toString()).contains("diagnostics/talkweave-0.1.0-SNAPSHOT-diagnostics.jar");
+        var export = buildSteps.stream().filter(step -> step.getOrDefault("run", "").toString()
+                .contains("docker save")).findFirst().orElseThrow();
+        assertThat(export.get("if")).isEqualTo("needs.verify.outputs.publish == 'true'");
+        assertThat(buildSteps.toString()).contains("diagnostics/talkweave-0.1.0-SNAPSHOT-diagnostics.jar")
+                .doesNotContain("Require external-service runtime acceptance before publication", "Publication blocked");
     }
     @Test void composeUsesOnlyExternalServicesAndPrivateMaterials() throws Exception {
         var services = map(yaml("compose.yml").get("services"));
@@ -123,8 +171,12 @@ class WorkflowContractTest {
         assertThat(docker.substring(docker.indexOf("FROM ${RUNTIME_IMAGE}")))
                 .doesNotContain("COPY src", "COPY config", "COPY data", "diagnostics.jar", "sqlite");
     }
-    @Test void externalIntegrationIsExplicitProtectedAndCannotOpenPublicationGate() throws Exception {
+    @Test void externalIntegrationIsExplicitProtectedAndSeparateFromPublication() throws Exception {
         var external=map(jobs().get("external-integration"));
+        for (String id : List.of("verify", "build", "publish-images", "publish-manifest")) {
+            assertThat(map(jobs().get(id)).getOrDefault("needs", List.of()).toString())
+                    .doesNotContain("external-integration");
+        }
         assertThat(external.get("if").toString()).contains("workflow_dispatch","inputs.external_integration","github.event.repository.default_branch");
         assertThat(external.get("environment")).isEqualTo("external-integration");
         assertThat(steps(external).toString()).contains("secrets.EXTERNAL_SERVICES_YAML","APPROVED_MYSQL_SCHEMA","EXPECTED_REDIS_VERSION")
