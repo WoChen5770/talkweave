@@ -1,4 +1,6 @@
-# Talkweave：GitHub Actions / GHCR 使用说明
+# 历史：SQLite 版 GitHub Actions / GHCR
+
+> 下文是旧 SQLite 流水线说明，不是当前发布行为。当前无网络烟测明确 NOT_RUN 外部服务，发布已阻断；见 [当前 CI 与验证说明](mysql-redis-development.md)。不要依据旧文档删除门禁或部署 latest。
 
 ## 分工与当前状态
 

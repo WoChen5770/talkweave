@@ -16,10 +16,16 @@ public final class MysqlOwnership implements AutoCloseable {
     private final Connection connection;
     private final String name;
     private volatile boolean lost;
+    private boolean closed;
     // A cancelled virtual user worker must never close the shared ownership socket.
     private final ExecutorService checks = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().name("mysql-ownership").factory());
 
     private MysqlOwnership(Connection connection, String name) { this.connection = connection; this.name = name; }
+
+    /** Latched local state, not a replacement for a live ownership check. */
+    public boolean isLost() { return lost; }
+    /** Nonblocking local fence for shutdown; releasing the database session is a separate operation. */
+    public void fence() { lost = true; }
 
     public static MysqlOwnership acquire(ExternalServices.Mysql config) {
         Connection connection = null;
@@ -48,6 +54,7 @@ public final class MysqlOwnership implements AutoCloseable {
                     throw new ManagedProblem(DATABASE_UNAVAILABLE);
                 }
             }).get();
+            if (lost) throw new ManagedProblem(DATABASE_UNAVAILABLE);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new ManagedProblem(DATABASE_UNAVAILABLE);
@@ -66,12 +73,14 @@ public final class MysqlOwnership implements AutoCloseable {
     }
     @FunctionalInterface interface SqlWork<T> { T run(Connection connection) throws SQLException; }
 
-    @Override public synchronized void close() {
-        if (!lost) {
-            lost = true;
+    @Override public void close() {
+        fence();
+        synchronized (this) {
+            if (closed) return;
+            closed = true;
             try { connection.close(); } catch (SQLException ignored) { }
+            finally { checks.shutdown(); }
         }
-        checks.shutdown();
     }
 
     static String digest(String value) {

@@ -8,6 +8,7 @@ import java.util.*;
 public final class ExternalBusinessFixture implements AutoCloseable {
     private ExternalIntegrationTarget target;
     private ManagedStore current;
+    private MysqlOwnership currentOwner;
     private long epoch;
 
     public ManagedStore open() {
@@ -23,11 +24,18 @@ public final class ExternalBusinessFixture implements AutoCloseable {
                 return null;
             });
             current = ManagedStore.openOwned(target.config().mysql(), owner);
+            currentOwner = owner;
             epoch = current.epoch();
             return current;
         } catch (SQLException | RuntimeException failure) {
             owner.close(); throw new IllegalStateException("Synthetic fixture initialization failed; target unchanged except recognized initialization");
         }
+    }
+
+    /** Fault only the dedicated connection acquired by this fixture, never another server session. */
+    public void abortOwnLockConnection() throws SQLException {
+        if (currentOwner == null) throw new IllegalStateException("Fixture is not open");
+        currentOwner.use(c -> { c.abort(Runnable::run); return null; });
     }
 
     @Override public void close() {
@@ -67,8 +75,16 @@ public final class ExternalBusinessFixture implements AutoCloseable {
                     // Only the singleton known empty at fixture entry; never a production settings row.
                     Sql.update(c, "UPDATE admin_setting SET idle_minutes=30,revision=1,model_version=NULL WHERE slot=1");
                     for (var entry : keys.entrySet()) {
-                        String predicate = String.join(" AND ", Arrays.stream(columns.get(entry.getKey()).split(",")).map(k -> k + "=?").toList());
-                        for (var row : entry.getValue()) Sql.update(c, "DELETE FROM " + entry.getKey() + " WHERE " + predicate, row);
+                        // Bounded exact-key batches keep long-history fixtures practical over a remote link.
+                        var names = columns.get(entry.getKey()).split(",");
+                        String tuple = "(" + String.join(",", Collections.nCopies(names.length, "?")) + ")";
+                        for (int offset = 0; offset < entry.getValue().size(); offset += 250) {
+                            var batch = entry.getValue().subList(offset, Math.min(offset + 250, entry.getValue().size()));
+                            var values = new ArrayList<Object>();
+                            for (var row : batch) Collections.addAll(values, row);
+                            Sql.update(c, "DELETE FROM " + entry.getKey() + " WHERE (" + columns.get(entry.getKey()) + ") IN ("
+                                    + String.join(",", Collections.nCopies(batch.size(), tuple)) + ")", values.toArray());
+                        }
                     }
                     owner.check(); c.commit();
                 } catch (SQLException | RuntimeException failure) { c.rollback(); throw failure; }

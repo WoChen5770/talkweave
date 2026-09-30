@@ -1,5 +1,7 @@
 # 多用户管理端交付检查（2026-09-29）
 
+> 旧 SQLite change 的历史记录，以下“当前”仅指记录当时。本版本证据请看 [MySQL/Redis 实施记录](../openspec/changes/adopt-mysql-redis-conversation-runtime/implementation-status.md)，不继承旧存储/部署验收。
+
 ## 2026-09-30 自动绑定与无损重认证补充（当前状态）
 
 - 双账号及同号重扫真实观察完成；已核对腾讯上游锁定提交的扫码 userId → 持久 userId → from_user_id 授权及跨机器人清理关系，详见 `multi-user-protocol.md`。

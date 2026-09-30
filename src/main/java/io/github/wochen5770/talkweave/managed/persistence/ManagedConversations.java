@@ -131,11 +131,11 @@ public final class ManagedConversations {
     }
     private static HistorySnapshot snapshot(Connection c, ManagedScope scope, long sequence) throws SQLException {
         ManagedUsers.authorize(c, scope);
-        var event = event(c, scope, sequence);
-        try (var s = prepare(c, "SELECT history_revision,confirmed_turn_count,last_confirmed_sequence FROM conversation WHERE id=? AND user_id=? AND binding_id=?",
-                event.conversationId(), scope.userId(), scope.bindingId()); var r = s.executeQuery()) {
+        // Metadata reads must not fetch message bodies or context tokens, even on a hot hit.
+        try (var s = prepare(c, "SELECT v.history_revision,v.confirmed_turn_count,v.last_confirmed_sequence,v.id FROM inbound_event e JOIN conversation v ON v.id=e.conversation_id AND v.user_id=e.user_id AND v.binding_id=e.binding_id WHERE e.sequence=? AND e.user_id=? AND e.binding_id=? AND e.bot_id=? AND e.sender_id=? AND e.generation=? AND e.auth_epoch=?",
+                sequence, scope.userId(), scope.bindingId(), scope.botId(), scope.senderId(), scope.generation(), scope.authEpoch()); var r = s.executeQuery()) {
             if (!r.next()) throw new ManagedProblem(NOT_FOUND);
-            return new HistorySnapshot(scope, event.conversationId(), sequence, r.getLong(1), r.getLong(2), r.getLong(3));
+            return new HistorySnapshot(scope, r.getString(4), sequence, r.getLong(1), r.getLong(2), r.getLong(3));
         }
     }
     public HistoryRead readHistory(ManagedScope scope, long sequence, int rounds) {

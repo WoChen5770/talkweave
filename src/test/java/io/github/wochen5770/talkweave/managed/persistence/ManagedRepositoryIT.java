@@ -182,6 +182,11 @@ class ManagedRepositoryIT {
             var a = f.newBound("a"); var limited = new ManagedConversations(f.store, clock, 1, 2);
             expect(BACKLOG, () -> limited.accept(a, new WechatApiClient.Updates(List.of(message("one", a.senderId(), "one"), message("two", a.senderId(), "two")), "new-cursor", null)));
             assertThat(f.users.connection(a).cursor()).isEmpty();
+            f.store.transaction(c -> {
+                for (String table : List.of("inbound_event", "turn", "conversation", "active_conversation"))
+                    assertThat(Sql.scalar(c, "SELECT count(*) FROM " + table)).isZero();
+                return null;
+            });
             assertThat(limited.accept(a, updates(message("one", a.senderId(), "one")))).hasSize(1);
         }
     }
@@ -462,6 +467,137 @@ class ManagedRepositoryIT {
     }
 
     private Fixture fixture() { return new Fixture(); }
+
+    @Test void competingClaimsAndGlobalCapacityAreEnforcedAcrossPooledConnections() throws Exception {
+        try (var f = fixture(); var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = f.newBound("a"); var b = f.newBound("b");
+            var limited = new ManagedConversations(f.store, clock, 1, 1);
+            var start = new CountDownLatch(1);
+            var accepted = new ArrayList<Future<ManagedScope>>();
+            for (var scope : List.of(a, b)) accepted.add(workers.submit(() -> {
+                start.await();
+                try { limited.accept(scope, updates(message("one", scope.senderId(), "synthetic"))); return scope; }
+                catch (ManagedProblem problem) { assertThat(problem.code()).isEqualTo(BACKLOG); return null; }
+            }));
+            start.countDown();
+            var first = accepted.get(0).get(5, TimeUnit.SECONDS); var second = accepted.get(1).get(5, TimeUnit.SECONDS);
+            assertThat(List.of(first != null, second != null)).containsExactlyInAnyOrder(true, false);
+            var winner = first != null ? first : second; var loser = first != null ? b : a;
+            assertThat(f.users.connection(loser).cursor()).isEmpty();
+            long events = f.store.transaction(c -> Sql.scalar(c, "SELECT count(*) FROM inbound_event"));
+            assertThat(events).isEqualTo(1);
+            var claimStart = new CountDownLatch(1);
+            var claims = new ArrayList<Future<Optional<ManagedConversations.Work>>>();
+            for (int i = 0; i < 2; i++) claims.add(workers.submit(() -> { claimStart.await(); return limited.claim(winner); }));
+            claimStart.countDown();
+            var left = claims.get(0).get(5, TimeUnit.SECONDS); var right = claims.get(1).get(5, TimeUnit.SECONDS);
+            assertThat(List.of(left.isPresent(), right.isPresent())).containsExactlyInAnyOrder(true, false);
+            var work = left.orElseGet(right::orElseThrow);
+            limited.saveReply(winner, work.event().sequence(), "saved", true);
+            assertThat(limited.claim(winner).orElseThrow().sending()).isTrue();
+            assertThat(limited.claim(winner)).isEmpty();
+            limited.finishSend(winner, work.event().sequence(), ManagedConversations.Delivery.CONFIRMED);
+            assertThat(limited.accept(loser, updates(message("one", loser.senderId(), "retry after capacity frees")))).hasSize(1);
+        }
+    }
+
+    @Test void secondStoreCannotRecoverAnyLiveWorkOrAdvanceEpoch() {
+        ManagedScope generating, sending;
+        long epoch;
+        String installation, cacheEpoch, invitation, attempt;
+        long processingSequence, sendingSequence;
+        try (var f = fixture()) {
+            generating = f.newBound("generating"); sending = f.newBound("sending");
+            long version = f.settings.saveModel(TestProperties.model("https://synthetic.invalid", "synthetic-key")).version();
+            processingSequence = f.accept(generating, "processing", "synthetic").sequence();
+            f.chat.claim(generating).orElseThrow();
+            attempt = f.usage.begin(generating, processingSequence, version);
+            sendingSequence = f.accept(sending, "sending", "synthetic").sequence();
+            f.chat.claim(sending).orElseThrow(); f.chat.saveReply(sending, sendingSequence, "saved", true);
+            f.chat.claim(sending).orElseThrow();
+            var invited = f.users.create("invited"); invitation = f.verifying(invited.id(), Mode.INITIAL).id();
+            epoch = f.store.epoch(); installation = f.store.installationId(); cacheEpoch = f.store.cacheEpoch();
+            expect(DIRECTORY_IN_USE, () -> {
+                try (var ignored = ManagedStore.open(io.github.wochen5770.talkweave.managed.config.ExternalIntegrationTarget.load().config().mysql())) {
+                    throw new AssertionError("Second store must not open");
+                }
+            });
+            f.store.transaction(c -> {
+                assertThat(Sql.scalar(c, "SELECT epoch FROM runtime_owner WHERE slot=1")).isEqualTo(epoch);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM turn WHERE event_sequence=? AND stage='PROCESSING'", processingSequence)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM turn WHERE event_sequence=? AND stage='SENDING'", sendingSequence)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM model_attempt WHERE id=? AND outcome='STARTED'", attempt)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM binding_attempt WHERE id=? AND phase='VERIFYING_IDENTITY'", invitation)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM active_invitation WHERE attempt_id=?", invitation)).isEqualTo(1);
+                return null;
+            });
+        }
+        try (var f = fixture()) {
+            assertThat(f.store.epoch()).isEqualTo(epoch + 1);
+            assertThat(f.store.installationId()).isEqualTo(installation);
+            assertThat(f.store.cacheEpoch()).isNotEqualTo(cacheEpoch);
+            f.store.transaction(c -> {
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM turn WHERE event_sequence=? AND stage='INTERRUPTED'", processingSequence)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM turn WHERE event_sequence=? AND stage='DELIVERY_UNKNOWN'", sendingSequence)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM model_attempt WHERE id=? AND outcome='UNKNOWN'", attempt)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM binding_attempt WHERE id=? AND phase='CANCELLED'", invitation)).isEqualTo(1);
+                assertThat(Sql.scalar(c, "SELECT count(*) FROM active_invitation")).isZero();
+                return null;
+            });
+            assertThat(f.chat.claim(generating)).isEmpty(); assertThat(f.chat.claim(sending)).isEmpty();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"MODEL_RESULT", "SAVE_REPLY", "SEND_RESULT"})
+    void lateExternalSuccessAfterLockAbortAndNewEpochCannotCommitOrReplay(String phase) throws Exception {
+        boolean duringSend = phase.equals("SEND_RESULT");
+        boolean usagePersisted = !phase.equals("MODEL_RESULT");
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var models = new java.util.concurrent.atomic.AtomicInteger(); var sends = new java.util.concurrent.atomic.AtomicInteger();
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor(); var old = fixture()) {
+            var scope = old.newBound("old-owner");
+            old.settings.saveModel(TestProperties.model("https://synthetic.invalid", "synthetic-key"));
+            var event = old.accept(scope, "one", "synthetic question");
+            var worker = new io.github.wochen5770.talkweave.managed.runtime.ManagedTurnWorker(old.users, old.settings, old.chat, old.usage,
+                    (snapshot, context, messages, observer) -> {
+                        observer.beforeAttempt(1); models.incrementAndGet();
+                        if (!usagePersisted) { entered.countDown(); RuntimeManagerIT.awaitIgnoringInterrupt(release); }
+                        observer.afterAttempt(1, io.github.wochen5770.talkweave.model.ModelAttemptObserver.Outcome.SUCCEEDED, TokenUsage.normalize(10, 2, null));
+                        if (phase.equals("SAVE_REPLY")) { entered.countDown(); RuntimeManagerIT.awaitIgnoringInterrupt(release); }
+                        return new io.github.wochen5770.talkweave.assistant.AssistantService.Reply("late answer", false);
+                    }, (credentials, recipient, token, clientId, text) -> {
+                        sends.incrementAndGet(); entered.countDown(); RuntimeManagerIT.awaitIgnoringInterrupt(release);
+                    }, 4096);
+            if (duringSend) assertThat(worker.runOnce(scope)).isTrue();
+            var late = executor.submit(() -> worker.runOnce(scope));
+            try {
+                assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+                database.abortOwnLockConnection(); old.store.close();
+                try (var next = fixture()) {
+                    assertThat(next.store.epoch()).isEqualTo(old.store.epoch() + 1);
+                    release.countDown();
+                    assertThatThrownBy(() -> late.get(5, TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class).hasCauseInstanceOf(ManagedProblem.class);
+                    expect(DATABASE_UNAVAILABLE, () -> worker.runOnce(scope));
+                    expect(DATABASE_UNAVAILABLE, () -> old.accept(scope, "late-poll", "must not accept"));
+                    assertThat(next.chat.claim(scope)).isEmpty();
+                    assertThat(next.chat.accept(scope, updates(message("one", scope.senderId(), "duplicate")))).isEmpty();
+                    next.store.transaction(c -> {
+                        assertThat(Sql.scalar(c, "SELECT count(*) FROM turn WHERE event_sequence=? AND stage=?", event.sequence(),
+                                duringSend ? "DELIVERY_UNKNOWN" : "INTERRUPTED")).isEqualTo(1);
+                        assertThat(Sql.scalar(c, "SELECT history_revision FROM conversation WHERE id=?", event.conversationId())).isZero();
+                        assertThat(Sql.scalar(c, "SELECT count(*) FROM model_attempt WHERE event_sequence=?", event.sequence())).isEqualTo(1);
+                        assertThat(Sql.scalar(c, "SELECT count(*) FROM model_usage")).isEqualTo(usagePersisted ? 1 : 0);
+                        assertThat(Sql.scalar(c, "SELECT count(*) FROM model_attempt WHERE event_sequence=? AND outcome=?", event.sequence(),
+                                usagePersisted ? "SUCCEEDED" : "UNKNOWN")).isEqualTo(1);
+                        return null;
+                    });
+                    assertThat(models.get()).isEqualTo(1); assertThat(sends.get()).isEqualTo(duringSend ? 1 : 0);
+                }
+            } finally { release.countDown(); }
+        }
+    }
+
     private class Fixture implements AutoCloseable {
         final ManagedStore store = database.open();
         final ManagedUsers users = new ManagedUsers(store, clock);

@@ -6,6 +6,8 @@ import io.github.wochen5770.talkweave.managed.persistence.ManagedConversations.*
 import io.github.wochen5770.talkweave.model.ModelConfiguration;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -101,6 +103,60 @@ class HistoryServiceTest {
         assertThrows(IllegalArgumentException.class, () -> new HistoryWindow(1,scope,conversation,1,2,2,99,2,List.of(new Pair(99,"x","y"),new Pair(98,"z","w"))));
         assertThrows(IllegalArgumentException.class, () -> HistoryWindow.decode("x" + window.encode(4096).substring(1), 4096));
         assertFalse(window.toString().contains("😀"));
+    }
+    @Test void identicalConcurrentMissesShareOneBodyReadAndFollowersReauthorize() throws Exception {
+        var s = snapshot(10,1,5); var read = new HistoryRead(s,List.of(new Pair(5,"a","b")));
+        when(database.historySnapshot(scope,10)).thenReturn(s);
+        var entered = new CountDownLatch(1); var release = new CountDownLatch(1);
+        var gets = new AtomicInteger();
+        var port = new HistoryCachePort() {
+            public String get(String key,long deadline) { gets.incrementAndGet(); return null; }
+            public void put(String key,String value,long deadline) { }
+            public void discard(String key,String value,long deadline) { }
+            public void close() { }
+        };
+        var slowConfig = new ExternalServices.HistoryCache(true,"synthetic",Duration.ofSeconds(60),4096,Duration.ofMillis(100),Duration.ofSeconds(2),2,4);
+        when(database.readHistory(scope,10,2)).thenAnswer(call -> { entered.countDown(); assertTrue(release.await(2,TimeUnit.SECONDS)); return read; });
+        try (var history = new HistoryService(database,slowConfig,port,installation,run);
+             var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var leader = executor.submit(() -> history.load(scope,10,model(2,1)));
+            assertTrue(entered.await(1,TimeUnit.SECONDS));
+            var followers = new ArrayList<Future<?>>();
+            for (int i=0;i<3;i++) followers.add(executor.submit(() -> history.load(scope,10,model(2,1))));
+            long deadline = System.nanoTime()+TimeUnit.SECONDS.toNanos(1);
+            while (gets.get()<4 && System.nanoTime()<deadline) Thread.sleep(1);
+            assertEquals(4,gets.get()); Thread.sleep(30); release.countDown();
+            assertEquals(2,leader.get(2,TimeUnit.SECONDS).size());
+            for (var follower : followers) follower.get(2,TimeUnit.SECONDS);
+            assertEquals(1,history.status().bodyQueries());
+            assertEquals(8,history.status().metadataReads()); // 4 initial + leader source + 3 follower rechecks
+        } finally { release.countDown(); }
+    }
+    @Test void cacheMissReauthorizationRevocationPropagatesAndBypassIsNotAnError() {
+        var s = snapshot(10,1,5); seed(s,List.of(new Pair(5,"a","b")),2);
+        var bypass = new HistoryCachePort() {
+            public String get(String key,long deadline) { throw new HistoryCachePort.Bypassed(); }
+            public void put(String key,String value,long deadline) { throw new HistoryCachePort.Bypassed(); }
+            public void discard(String key,String value,long deadline) { }
+            public void close() { }
+        };
+        try (var history = new HistoryService(database,config,bypass,installation,run)) {
+            assertEquals(2,history.load(scope,10,model(2,1)).size());
+            assertEquals(2,history.status().bypass()); assertEquals(0,history.status().error());
+            when(database.readHistory(scope,10,2)).thenThrow(new ManagedProblem(ManagedProblem.Code.UNAUTHORIZED));
+            assertEquals(ManagedProblem.Code.UNAUTHORIZED,assertThrows(ManagedProblem.class,() -> history.load(scope,10,model(2,1))).code());
+        }
+    }
+    @Test void failedOrGappedDeliveryCannotAppendAndModelVersionsHaveSeparateWindows() {
+        var s = snapshot(10,1,5); seed(s,List.of(new Pair(5,"a","b")),2);
+        service.load(scope,10,model(2,1)); String original=cache.value;
+        service.afterSend(10,Optional.empty()); assertEquals(original,cache.value);
+        service.load(scope,10,model(2,1));
+        service.afterSend(10,Optional.of(new Delivered(scope,conversation,2,3,3,10,new Pair(10,"gap","gap"))));
+        assertEquals(original,cache.value); assertEquals(1,service.status().stale());
+        service.load(scope,10,model(2,2));
+        assertEquals(2,HistoryWindow.decode(cache.value,4096).modelVersion());
+        assertEquals(2,service.status().bodyQueries());
     }
     private static final class MemoryCache implements HistoryCachePort {
         String value; int gets, discards; boolean fail;

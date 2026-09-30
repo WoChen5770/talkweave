@@ -7,6 +7,10 @@ name: Verify and publish container
     tags: ['v*']
   workflow_dispatch:
     inputs:
+      external_integration:
+        description: Run against the separately approved external-integration environment (default branch only)
+        type: boolean
+        default: false
       publish:
         description: Publish to GHCR (default branch or v* tag only)
         type: boolean
@@ -20,6 +24,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  external-integration:
+    if: github.event_name == 'workflow_dispatch' && inputs.external_integration && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    environment: external-integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify explicitly authorized external target with restricted egress
+        env:
+          EXTERNAL_SERVICES_YAML: ${{ secrets.EXTERNAL_SERVICES_YAML }}
+          APPROVED_MYSQL_SCHEMA: ${{ vars.APPROVED_MYSQL_SCHEMA }}
+          APPROVED_REDIS_PREFIX: ${{ vars.APPROVED_REDIS_PREFIX }}
+          EXPECTED_MYSQL_VERSION: ${{ vars.EXPECTED_MYSQL_VERSION }}
+          EXPECTED_REDIS_VERSION: ${{ vars.EXPECTED_REDIS_VERSION }}
+        run: bash scripts/ci/external-services.sh
+      - name: Preserve only sanitized integration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: external-integration-evidence
+          path: |
+            target/surefire-reports/
+            target/external-acceptance.txt
+          retention-days: 14
+
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -64,6 +102,7 @@ jobs:
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes= .github/workflows/container.yml
           bash -n scripts/ci/image-smoke.sh
+          bash -n scripts/ci/external-services.sh
       - name: Test and package (synthetic services only)
         run: mvn -B -Dstyle.color=never verify
       - name: Test management UI logic (synthetic DOM only)

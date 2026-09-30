@@ -28,7 +28,7 @@ public final class RedisHistoryCache implements HistoryCachePort {
         uri = builder.build();
         resources = DefaultClientResources.builder().ioThreadPoolSize(2).computationThreadPoolSize(2).build();
         client = RedisClient.create(resources, uri);
-        client.setOptions(ClientOptions.builder().requestQueueSize(config.requestQueueSize())
+        client.setOptions(ClientOptions.builder().autoReconnect(false).requestQueueSize(config.requestQueueSize())
                 .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
                 .socketOptions(SocketOptions.builder().connectTimeout(config.commandTimeout()).build())
                 .timeoutOptions(TimeoutOptions.enabled(config.commandTimeout())).build());
@@ -39,15 +39,28 @@ public final class RedisHistoryCache implements HistoryCachePort {
             connection = client.connectAsync(StringCodec.UTF8, uri).toCompletableFuture();
         return connection;
     }
+    private synchronized void invalidate(CompletableFuture<StatefulRedisConnection<String, String>> attempted) {
+        if (attempted == null || connection != attempted) return;
+        connection = null;
+        // A timed-out connect can still finish. Dispose it instead of leaving a detached reconnect loop.
+        attempted.thenAccept(StatefulRedisConnection::closeAsync);
+    }
     @FunctionalInterface private interface Command<T> { RedisFuture<T> run(StatefulRedisConnection<String, String> c); }
     private <T> T execute(long deadline, Command<T> command) {
-        if (closed || System.nanoTime() < retryAfter || !permits.tryAcquire()) throw new IllegalStateException("History cache bypassed");
+        if (closed || System.nanoTime() >= deadline || System.nanoTime() < retryAfter || !permits.tryAcquire()) throw new HistoryCachePort.Bypassed();
+        CompletableFuture<StatefulRedisConnection<String, String>> attempted = null;
+        RedisFuture<T> pending = null;
         try {
-            var c = await(connection(), deadline);
-            return await(command.run(c), deadline);
+            attempted = connection();
+            var c = await(attempted, deadline);
+            if (System.nanoTime() >= deadline) throw new TimeoutException();
+            pending = command.run(c);
+            return await(pending, deadline);
         } catch (Exception failure) {
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
             retryAfter = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            if (pending != null) pending.cancel(false);
+            invalidate(attempted);
             throw new IllegalStateException("History cache unavailable");
         } finally { permits.release(); }
     }
@@ -67,11 +80,20 @@ public final class RedisHistoryCache implements HistoryCachePort {
         execute(deadline, c -> c.async().eval("if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) end; return 0",
                 ScriptOutputType.INTEGER, new String[]{key}, expected));
     }
-    @Override public synchronized void close() {
-        if (closed) return;
-        closed = true;
-        if (connection != null) connection.thenAccept(StatefulRedisConnection::closeAsync);
-        client.shutdownAsync(0, 1, TimeUnit.SECONDS);
-        resources.shutdown(0, 1, TimeUnit.SECONDS);
+    @Override public void close() {
+        synchronized(this) {
+            if (closed) return;
+            closed = true;
+            if (connection != null) connection.thenAccept(StatefulRedisConnection::closeAsync);
+        }
+        var stopped = new CompletableFuture<Void>();
+        client.shutdownAsync(0, 1, TimeUnit.SECONDS).whenComplete((ignored, clientFailure) ->
+                resources.shutdown(0, 1, TimeUnit.SECONDS).addListener(future -> {
+                    if (clientFailure == null && future.isSuccess()) stopped.complete(null);
+                    else stopped.completeExceptionally(new IllegalStateException("History cache shutdown incomplete"));
+                }));
+        try { stopped.get(2,TimeUnit.SECONDS); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IllegalStateException("History cache shutdown interrupted"); }
+        catch (ExecutionException | TimeoutException incomplete) { throw new IllegalStateException("History cache shutdown incomplete"); }
     }
 }

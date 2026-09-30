@@ -1,8 +1,33 @@
 # Requirement / scenario 覆盖与退役映射
 
-本文件定义任务 1.4 的实施清单，不将计划视为已通过。每个 scenario 单独列出；`拟建` 的 IT/基准尚不存在，须在真实引擎环境落地。时间相关已有测试通过仅证明当前链路，不能替代将来的 MySQL/Redis 回归。
+当前全部 **51 场景**及测试退役/迁移/保留状态以 [coverage-current.md](coverage-current.md) 为准；最新数量、版本、失败修复和未完成项以 [实施记录](implementation-status.md) 顶部为准，性能数据见 [performance.md](performance.md)。本文件下方保留任务 1.4 原规划和分阶段历史证据，不能把旧“拟建/未接线/待测”状态当作当前状态，也不能将早期通过数混入最终报告。
 
-状态：`时间合成已验` = Java 21 本机合成测试已执行；`待实施/验证` = 不得计入验收通过。精确命令和环境限制见 [实施记录](implementation-status.md)。
+历史表中 `时间合成已验` 和 `待实施/验证` 仅表示当时阶段。当前已完成默认缓存预算、长历史/性能矩阵、在途关闭和实际合成浏览器验收；实际损坏布局、备份恢复、完整真实账号和双架构正式镜像仍未验收。
+
+## 先前业务续作补充（macOS，2026-09-30，历史阶段）
+
+最新进度 **26/45**；真实 MySQL 8.0.46 / Redis 7.4.9 的显式 IT **73/73** 通过，9 suites，零失败/错误/跳过；收尾 Java 单元 **228/228**、Node **14/14**、候选正式 JAR 实际检查和 OpenSpec strict/diff 检查通过。详细命令及失败修复见 [实施记录](implementation-status.md) 最上方。此段覆盖下方早期“尚未接线/缺少配置”的历史说明。
+
+| 当前 requirement/scenario 范围 | 实际入口/证据 | 状态/限制 |
+| --- | --- | --- |
+| Atomic work transitions / Batch fails before commit；Competing workers and a slow remote call | ManagedRepositoryIT 的全局配额双用户竞争、同用户并发领取和整批事件/会话/游标回滚；RuntimeManagerIT 的慢用户及独立用户队列；ExternalTransactionsIT 的双池连接并行、回滚、64 位主键；MysqlTransactionsTest 的安全有限重试 | 2.4、3.3、3.4、3.7 已验；没有外部调用包在可重试事务中 |
+| Scoped identity / Concurrent binding；Reauthenticate or replace | ManagedRepositoryIT、BindingCoordinatorIT 的账号/机器人冲突、并发激活、ABA、generation/auth_epoch、跨用户注入、原身份新机器人与明确换身份 | 3.1 已验 |
+| Fresh bootstrap；Stable scoped conversation pagination | AdminApiIT、ManagedRepositoryIT、ExternalPaginationIT 的管理员不重置、Key 不读回、版本设置、范围分页/审计和重开保留 | 3.2 已验；正式镜像引导仍待 7.5 |
+| Exclusive ownership / A second instance starts | secondStoreCannotRecoverAnyLiveWorkOrAdvanceEpoch：同时保留 PROCESSING/SENDING/STARTED/有效邀请及 epoch；释放后才恢复 | 2.5 已验 |
+| Exclusive ownership / Runtime ownership becomes uncertain | lateExternalSuccessAfterLockAbortAndNewEpochCannotCommitOrReplay 的模型返回/回复保存/发送结果三断点；RuntimeManagerIT 全 channel 关闭及在途取消；BindingCoordinatorIT 全二维码任务/材料清理 | 2.6 已验：仅中止测试自有物理连接，不 KILL 服务端其他会话 |
+| Recover uncertain operations / Crash after generation or during sending | 原 restart/uncertainSend 回归 + 新 epoch 迟到结果测试，已保存用量保留、未保存为未知、回复/发送不重放 | 3.4、3.5、3.7 已验；真实备份覆盖不包含在内 |
+| Stable conversation lifecycle / Queue crosses boundary；Exact idle boundary and restart | ManagedRepositoryIT 的 idleWindowSlides、timeoutUpdate、newCommand、queuedTurn 等，用可控 Clock 在真实 MySQL 验证 | 3.3 已验 |
+| Bounded history；Incremental cache / Consecutive successful turns | ExternalHistoryIT 的先过滤 LIMIT、0 轮、未来边界、幂等 revision、真实 EXPLAIN、热命中不查正文及增量 | 部分已验；3.6 长历史、4.x 边界/故障与默认预算仍待补测 |
+| One production runtime / Legacy configuration；Inspect artifact | FoundationContextTest、WorkflowContractTest、独立 ManagedContainerProbe 检查正式 JAR；旧仓储/驱动/SQL/授权入口已退役，MySQL 替代业务回归通过 | 6.2、6.4、7.1 已验；正式镜像运行仍待验 |
+| Shared infrastructure / Secret isolation；Versioned backup | 当前 mysql-redis-operations/development 文档；README 指向新入口，旧 SQLite 文档明确历史标记 | 7.3 文档完成；最小权限实际 ACL、真实恢复与双架构不是文档完成的证据 |
+
+下方表格保留原 51 场景规划清单。此处未覆盖的场景仍按下方“待实施/验证”处理，特别是缓存恢复、性能、实际浏览器/镜像/备份和全应用停止。6.5 的全部有效安全替代覆盖仍未闭合，不因文档标记历史或通过数增加提前完成。
+
+任务 6.4 已完成：`ManagedContainerProbeTest` 覆盖缺失必需组件、旧 SQL/授权/SQLite/诊断/夹具误入正式包的拒绝；`WorkflowContractTest` 验证独立诊断加载、仅应用的 Compose 和不放行发布的离线边界。独立构建的 diagnostics JAR 实际加载并检查同次正式候选 JAR 通过，正式包不含探针或测试夹具。微信、模型、双账号的合成探针回归继续保留，真实调用仍要求显式授权。
+
+先前独立诊断阶段 Java **228/228**、Node **14/14** 通过；当时尚无引擎结果，现已由上方最新 IT 证据补充，但仍没有正式容器或浏览器 E2E 通过声明。先前 `target` 残留旧 SQL 已被产物检查拒绝；没有删除旧产物。
+
+以下早期表格与映射是规划及历史证据，不代表旧类仍存在：`ManagedRepositoryTest`、`RuntimeManagerTest`、`BindingCoordinatorTest`、`AdminApiTest` 已迁移为对应 `*IT`；当前布局/事务/历史入口为 `ExternalSchemaIT`、`ExternalPaginationIT`、`ExternalTransactionsIT`、`ExternalHistoryIT`。SQLite 专属生产实现及测试已在此前提交退役，6.2 现有真实业务替代证据，6.5 全覆盖闭合仍待完成。
 
 ## 2026-09-30 授权 NAS 基础验证补充
 
@@ -95,7 +120,7 @@
 | --- | --- | --- | --- |
 | One supported production runtime and storage path | Attempt to use legacy configuration | 更新 WorkflowContractTest/FoundationContextTest，拟建 ProductionArtifactIT 检查 profile、旧类/SQLite 驱动缺失（6.2、7.4–7.5）。 | 待实施/验证 |
 | One supported production runtime and storage path | Inspect the production artifact | 更新 WorkflowContractTest/FoundationContextTest，拟建 ProductionArtifactIT 检查 profile、旧类/SQLite 驱动缺失（6.2、7.4–7.5）。 | 待实施/验证 |
-| Diagnostic tools are explicit nonproduction artifacts | Run CI or an operator diagnostic | 保留协议/模型探针测试并迁至诊断 classpath，ProductionArtifactIT 检查正常 JAR 无入口，烟测作用于实际应用产物（6.4、7.5）。 | 待实施/验证 |
+| Diagnostic tools are explicit nonproduction artifacts | Run CI or an operator diagnostic | 协议/模型探针合成测试保留；`ManagedContainerProbeTest` 与独立 diagnostics JAR 实际检查正式候选；`WorkflowContractTest` 验证诊断接线和未验收发布阻断（6.4）。正式镜像内运行仍属 7.5/8.4。 | 本机构建/加载已验；镜像运行待验 |
 | Retire obsolete contracts without reducing active safety coverage | Replace SQLite-specific tests | 本文件逐项退役映射；MySQL 行为接管通过后才删旧测试，WorkflowContractTest 更新命令/产物门禁，所有遗漏均保留未完成（6.5、8.1、8.6）。 | 待实施/验证 |
 | Retire obsolete contracts without reducing active safety coverage | Review cleanup and documentation | 本文件逐项退役映射；MySQL 行为接管通过后才删旧测试，WorkflowContractTest 更新命令/产物门禁，所有遗漏均保留未完成（6.5、8.1、8.6）。 | 待实施/验证 |
 

@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.LongAdder;
 /** Cache errors are optional-performance failures; DB authorization/reads always propagate. */
 public final class HistoryService implements AutoCloseable {
     public record Status(String state, long hit, long miss, long stale, long error, long bypass,
-                         long bodyQueries, long reads, long totalReadNanos) { }
+                         long bodyQueries, long metadataReads, long reads, long totalReadNanos) { }
     private record Flight(HistorySnapshot snapshot, long version, int rounds) { }
     private record Prepared(String key, HistoryWindow window) { }
     private final ManagedConversations conversations;
@@ -19,7 +19,7 @@ public final class HistoryService implements AutoCloseable {
     private final HistoryCachePort cache;
     private final String namespace;
     private final LongAdder hit = new LongAdder(), miss = new LongAdder(), stale = new LongAdder(), error = new LongAdder(), bypass = new LongAdder();
-    private final LongAdder bodyQueries = new LongAdder(), reads = new LongAdder(), nanos = new LongAdder();
+    private final LongAdder bodyQueries = new LongAdder(), metadataReads = new LongAdder(), reads = new LongAdder(), nanos = new LongAdder();
     private final ConcurrentMap<Flight, CompletableFuture<HistoryRead>> flights = new ConcurrentHashMap<>();
     private final Semaphore rebuilds;
     private final Map<Long, Prepared> prepared = new LinkedHashMap<>();
@@ -41,11 +41,11 @@ public final class HistoryService implements AutoCloseable {
         try {
             int rounds = model.configuration().historyRounds();
             if (rounds == 0) {
-                conversations.historySnapshot(scope, sequence); // authorize, but no historical bodies or Redis
+                snapshot(scope, sequence); // authorize, but no historical bodies or Redis
                 return List.of();
             }
             if (!enabled()) { bypass.increment(); return source(scope, sequence, rounds).messages(); }
-            var snapshot = conversations.historySnapshot(scope, sequence);
+            var snapshot = snapshot(scope, sequence);
             if (!snapshot.latestTail()) { bypass.increment(); return source(scope, sequence, rounds).messages(); }
             String key = key(snapshot, model.version());
             long deadline = System.nanoTime() + config.stageBudget().toNanos();
@@ -64,7 +64,8 @@ public final class HistoryService implements AutoCloseable {
                     }
                 }
                 degraded = false;
-            } catch (RuntimeException unavailable) { failed(); }
+            } catch (HistoryCachePort.Bypassed unavailable) { bypass.increment(); }
+            catch (RuntimeException unavailable) { failed(); }
             if (window != null) {
                 hit.increment(); remember(sequence, key, window);
                 return window.read(snapshot, rounds).messages();
@@ -77,6 +78,7 @@ public final class HistoryService implements AutoCloseable {
                 remember(sequence, key, candidate);
                 if (System.nanoTime() < deadline) {
                     try { cache.put(key, encoded, deadline); degraded = false; }
+                    catch (HistoryCachePort.Bypassed unavailable) { bypass.increment(); }
                     catch (RuntimeException unavailable) { failed(); }
                 } else bypass.increment();
             } catch (IllegalArgumentException uncacheable) { bypass.increment(); }
@@ -84,26 +86,41 @@ public final class HistoryService implements AutoCloseable {
         } finally { nanos.add(System.nanoTime() - start); }
     }
     private HistoryRead source(ManagedScope scope, long sequence, int rounds) {
-        bodyQueries.increment(); return conversations.readHistory(scope, sequence, rounds);
+        bodyQueries.increment(); metadataReads.increment(); return conversations.readHistory(scope, sequence, rounds);
+    }
+    private HistorySnapshot snapshot(ManagedScope scope, long sequence) {
+        metadataReads.increment(); return conversations.historySnapshot(scope, sequence);
     }
     private HistoryRead rebuild(Flight flight, long deadline) {
         // Coalesce only identical authorized snapshots. No user-provided keys, unbounded queue, or background tasks.
-        var existing = flights.get(flight);
+        CompletableFuture<HistoryRead> existing;
+        CompletableFuture<HistoryRead> future = null;
+        synchronized (flights) {
+            existing = flights.get(flight);
+            if (existing == null && rebuilds.tryAcquire()) {
+                future = new CompletableFuture<>();
+                flights.put(flight, future);
+            }
+        }
         if (existing != null) {
-            try { return existing.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS); }
+            try {
+                var read = existing.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                // Authorization may have changed while this follower waited; never inherit the leader's authority.
+                if (snapshot(flight.snapshot().scope(), flight.snapshot().beforeSequence()).equals(read.snapshot())) return read;
+            }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new ManagedProblem(ManagedProblem.Code.DATABASE_UNAVAILABLE); }
-            catch (ExecutionException failed) { throw new ManagedProblem(ManagedProblem.Code.DATABASE_UNAVAILABLE); }
+            catch (ExecutionException failed) {
+                if (failed.getCause() instanceof ManagedProblem problem) throw problem;
+                throw new ManagedProblem(ManagedProblem.Code.DATABASE_UNAVAILABLE);
+            }
             catch (TimeoutException slow) { bypass.increment(); }
         }
-        if (!rebuilds.tryAcquire()) return source(flight.snapshot().scope(), flight.snapshot().beforeSequence(), flight.rounds());
-        var future = new CompletableFuture<HistoryRead>();
-        var prior = flights.putIfAbsent(flight, future);
+        if (future == null) return source(flight.snapshot().scope(), flight.snapshot().beforeSequence(), flight.rounds());
         try {
-            if (prior != null) return source(flight.snapshot().scope(), flight.snapshot().beforeSequence(), flight.rounds());
             var read = source(flight.snapshot().scope(), flight.snapshot().beforeSequence(), flight.rounds());
             future.complete(read); return read;
         } catch (RuntimeException failed) { future.completeExceptionally(failed); throw failed; }
-        finally { if (prior == null) flights.remove(flight, future); rebuilds.release(); }
+        finally { flights.remove(flight, future); rebuilds.release(); }
     }
     private synchronized void remember(long sequence, String key, HistoryWindow window) {
         if (closed) return;
@@ -120,13 +137,14 @@ public final class HistoryService implements AutoCloseable {
             if (next.isEmpty()) { stale.increment(); return; }
             cache.put(previous.key(), next.get().encode(config.maxEntryBytes()), System.nanoTime() + config.stageBudget().toNanos());
             degraded = false;
-        } catch (RuntimeException unavailable) { failed(); }
+        } catch (HistoryCachePort.Bypassed unavailable) { bypass.increment(); }
+        catch (RuntimeException unavailable) { failed(); }
     }
     private boolean enabled() { return !closed && config.enabled() && cache != null; }
     private void failed() { error.increment(); degraded = true; }
     public Status status() {
         return new Status(!enabled() ? "DISABLED" : degraded ? "DEGRADED" : "AVAILABLE", hit.sum(), miss.sum(), stale.sum(), error.sum(), bypass.sum(),
-                bodyQueries.sum(), reads.sum(), nanos.sum());
+                bodyQueries.sum(), metadataReads.sum(), reads.sum(), nanos.sum());
     }
     @Override public void close() {
         closed = true;

@@ -16,6 +16,7 @@
     <properties>
         <java.version>21</java.version>
         <talkweave.artifact-name>${project.artifactId}-${project.version}</talkweave.artifact-name>
+        <talkweave.build-directory>${project.basedir}/target</talkweave.build-directory>
         <spring-ai.version>1.1.8</spring-ai.version>
         <!-- Compatibility baseline for the external-service runtime (Boot 3.5.13 BOM). -->
         <mysql.version>9.6.0</mysql.version>
@@ -76,6 +77,7 @@
         </dependency>
     </dependencies>
     <build>
+        <directory>${talkweave.build-directory}</directory>
         <finalName>${talkweave.artifact-name}</finalName>
         <plugins>
             <plugin>
@@ -123,4 +125,3 @@
         </profile>
     </profiles>
 </project>
-

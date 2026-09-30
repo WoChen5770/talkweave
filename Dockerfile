@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 ARG BUILDER_IMAGE=maven:3.9.8-eclipse-temurin-21
 ARG RUNTIME_IMAGE=eclipse-temurin:21-jre-jammy
 FROM --platform=$BUILDPLATFORM ${BUILDER_IMAGE} AS build

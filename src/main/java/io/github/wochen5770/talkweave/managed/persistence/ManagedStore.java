@@ -48,6 +48,10 @@ public final class ManagedStore implements AutoCloseable {
     public String installationId() { return layout.installationId(); }
     public String cacheEpoch() { return cacheEpoch; }
     public void checkOwnership() { owner.check(); }
+    public boolean ownershipLost() { return owner.isLost(); }
+    public void fence() { owner.fence(); }
+    /** Aggregate pool acquisition time only; contains no scope, SQL or connection details. */
+    public long poolAcquireNanos() { return transactions.acquireNanos(); }
     @FunctionalInterface interface Work<T> { T run(Connection connection) throws SQLException; }
     <T> T transaction(Work<T> work) { return transactions.execute(work::run); }
 

@@ -29,6 +29,7 @@ public final class RuntimeManager implements AutoCloseable {
     private final ScheduledExecutorService coordinator = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("managed-runtime-manager").factory());
     private volatile Health health = Health.STARTING;
     private volatile boolean closed;
+    private final java.util.concurrent.atomic.AtomicBoolean disposed = new java.util.concurrent.atomic.AtomicBoolean();
     private boolean started;
 
     public RuntimeManager(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations, ManagedUsage usage,
@@ -62,6 +63,7 @@ public final class RuntimeManager implements AutoCloseable {
         if (closed) return;
         try {
             List<ManagedScope> active = users.activeScopes();
+            if (closed) return;
             var desired = new LinkedHashMap<String, ManagedScope>();
             for (var scope : active) desired.put(scope.userId(), scope);
             for (var entry : List.copyOf(channels.entrySet())) {
@@ -71,6 +73,7 @@ public final class RuntimeManager implements AutoCloseable {
             }
             health = freeBytes.getAsLong() < limits.minFreeBytes() ? Health.LOW_DISK : conversations.globalBacklog() ? Health.GLOBAL_BACKLOG : Health.RUNNING;
             for (var scope : desired.values()) {
+                if (closed) return;
                 if (channels.containsKey(scope.userId()) || scheduler.registered(scope.userId())) continue;
                 if (channels.size() >= limits.maxConnections()) { if (health == Health.RUNNING) health = Health.CONNECTION_LIMIT; break; }
                 ChannelRuntime.Port port = ports.open();
@@ -81,8 +84,10 @@ public final class RuntimeManager implements AutoCloseable {
                 } catch (RuntimeException failure) { port.close(); throw failure; }
             }
         } catch (RuntimeException failure) {
-            // Preserve running clients; ingestion pauses until DB/resource checks succeed. No sensitive exception text.
             health = Health.DATABASE_UNAVAILABLE;
+            // A transient pooled-connection error can pause ingestion. Lost runtime ownership
+            // cannot recover in this process: cancel every generation, including remote work.
+            if (users.runtimeOwnershipLost()) closeChannels();
         }
     }
     private boolean receiveAllowed() {
@@ -99,13 +104,21 @@ public final class RuntimeManager implements AutoCloseable {
             return new ChannelRuntime.Status(ChannelRuntime.State.STARTING, health == Health.CONNECTION_LIMIT ? "CONNECTION_LIMIT" : null);
         return channel.status();
     }
+    /** Does not wait for a coordinator currently in JDBC. */
+    public void quiesce() {
+        closed = true; health = Health.STOPPED; coordinator.shutdownNow();
+        scheduler.stop(Duration.ZERO);
+    }
     @Override public void close() {
+        quiesce();
+        if (!disposed.compareAndSet(false, true)) return;
         synchronized (this) {
-            if (closed) return;
-            closed = true; health = Health.STOPPED; coordinator.shutdownNow();
-            for (var channel : channels.values()) { try { channel.close(); } catch (RuntimeException ignored) { } }
-            channels.clear();
+            closeChannels();
         }
-        scheduler.stop(Duration.ofSeconds(4));
+        if (!scheduler.stop(Duration.ofSeconds(4))) throw new IllegalStateException("Runtime shutdown incomplete");
+    }
+    private void closeChannels() {
+        for (var channel : channels.values()) { try { channel.close(); } catch (RuntimeException ignored) { } }
+        channels.clear();
     }
 }

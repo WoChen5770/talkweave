@@ -1,5 +1,149 @@
 # 实施记录（2026-09-30）
 
+交付方式补充：本机验收后，操作者决定在 NAS 试部署阶段继续验证剩余项目，并授权提交、推送当前代码。下方“未提交/推送”描述保留为各次验收时的历史状态；此次源码推送不等于镜像发布或部署验收完成，进度仍为 39/45，发布门禁与私有配置隔离不变。
+
+## 最终本机合成验收与外部阻碍（2026-09-30，当前）
+
+当前 **39/45**。本节及 [51 场景当前覆盖](coverage-current.md)、[性能报告](performance.md) 优先于下方所有历史阶段状态。后续新增完成有界长历史、缓存窗口/故障/并发、统一关闭预算、有效安全测试替代、性能及实际浏览器验收；不代表整个 change 或部署发布完成。旧 `add-multi-user-wechat-admin` 的状态未改，也未同步、归档、提交、推送或发布。
+
+### 实现收尾
+
+- 有效缓存命中前仍查询 MySQL 授权与版本，但元数据 JOIN 不再读取入站正文或 context token；历史正文先过滤后 LIMIT，10000 轮实际执行计划无 filesort。
+- 修复同键回源登记竞态，等待者在获得结果后重新授权；有界合并和旁路不被计作传输错误。Redis 禁用后台自动重连，在有限冷却后显式重连；发命令前检查期限，超时取消并清理尝试连接。关闭按 client → resources 顺序等待，避免 Netty 资源过早关闭。
+- 新 `ManagedShutdown` 先撤销本进程运行权、停止调度，再让 MySQL/运行器/二维码/模型/历史组件共用 6 秒并行清理预算，给 Web/框架保留 2 秒。超时、失败和异常 Future 不虚报成功；组件未确认停止时不提前释放材料锁。状态只报告固定组件名，不打印异常秘密。
+- 管理页显示缓存可用/关闭/退化；LOW_DISK 明确只指材料目录，备份提醒改为 MySQL schema 与必要配置。聊天正文仍不可浏览，模型 Key 不读回，Redis 命中与提供商缓存 token 分开。
+- 合成夹具全程持有空业务预检取得的独占 owner，批量造数及清理只操作本次精确主键，保留安装 ID、布局、epoch 与自增水位；不删除旧 `target`、SQLite 或登录材料。
+
+### 最终验证结果
+
+环境：macOS **arm64**、Java **21.0.12.1**、Maven **3.9.16**；外部 **MySQL 8.0.46 / Redis 7.4.9**；Connector/J **9.6.0**、HikariCP **6.3.3**、Lettuce **6.6.0.RELEASE**。操作者配置始终为 **MySQL SSL DISABLED / Redis TLS false**，私有文件被 Git 忽略且权限 0600；没有在报告中输出凭据。
+
+| 验证 | 结果与范围 |
+| --- | --- |
+| Java `verify` | **237 tests / 29 suites，0 failure/error/skip**；包括 4 个统一关闭测试、11 个 HistoryService 测试和真实本机慢 Redis peer。 |
+| 显式外部回归 | 最后全量 **77/77** 通过；随后新增缓存范围/回调测试并重跑 ExternalHistoryIT **3/3**。最新报告去重 **78 tests / 10 suites，0 failure/error/skip**，不是把重复执行相加。 |
+| 外部 suite 分布 | ManagedRepositoryIT 30、RuntimeManagerIT 19、BindingCoordinatorIT 11、AdminApiIT 9、ExternalHistoryIT 3、ExternalRedisIT 2、Services/Schema/Pagination/Transactions 各 1。 |
+| Node 与页面脚本 | **14/14**，`app.js` 语法检查通过；Node 合成 DOM 不代替下方真实浏览器。 |
+| 正式候选 JAR / 独立 diagnostics | 实际 PropertiesLauncher 检查返回 `CI_MANAGED_OK mode=--artifact externalServices=NOT_RUN externalCalls=0`；无 SQLite/旧授权/探针/夹具入口。 |
+| 真实 Redis 默认预算 | 100/250ms，精确大于 2^53 的 CAS、较小窗口拒绝、1 秒 TTL、旧键重入校验、损坏/超限修复、自有代理断连/冷却/恢复通过；没有停止或重配置共享 Redis。 |
+| MySQL + Redis 组合 | 跨用户帧注入拒绝；确认提交后丢更新仍保留 MySQL revision 并回源；乱序/重复通知不覆盖新窗口；旧授权被拒绝，重认证保留历史，换身份及 /new 空历史。该范围套件采用 1s/2s 预算，不冒充默认预算负载测试。 |
+| 在途关闭 | 不合作假模型在共享预算内返回（<8s），报告 runtime 未完整清理、迟到结果无发送，新 owner 恢复 INTERRUPTED/UNKNOWN；完整浏览器进程停止约 **0.824s**。容器 SIGTERM 单独待验。 |
+| 性能 | **24 组**默认对照、**2 组**调参，共 1360 个完整合成测量轮次。热命中正文 SQL=0，没有稳定整轮加速；50/150ms 调参也未一致改善，生产 100/250ms 默认不变。完整口径见 performance.md。 |
+| 交付检查 | OpenSpec `validate --strict`、`git diff --check`、两个 CI 脚本 `bash -n`、页面脚本语法检查均通过；旧 change 无 diff，仍为 47/52。 |
+
+Java 21 / 临时目录环境和执行命令：
+
+```sh
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
+export JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp
+mvn -o -Dmaven.repo.local=.build-cache/m2 \
+  -Dtalkweave.build-directory=.build-cache/mysql-runtime-verify \
+  -Dtalkweave.artifact-name=talkweave-mysql-candidate verify -q
+mvn -o -Dmaven.repo.local=.build-cache/m2 \
+  -Dtalkweave.build-directory=.build-cache/mysql-final-it -Pexternal-services \
+  -Dtalkweave.it.config=/Users/chenqiang/code/talkweave/config/external-services.local.yml \
+  -Dtalkweave.it.mysql-schema=talkweave -Dtalkweave.it.redis-prefix=talkweave \
+  -Dtalkweave.it.mysql-version=8.0.46 -Dtalkweave.it.redis-version=7.4.9 \
+  -Dtalkweave.it.allow-schema-initialization=true -Dtalkweave.it.allow-schema-upgrade=true \
+  '-Dtest=*IT,!HistoryBenchmarkIT' test -q
+```
+
+新增测试后的定向命令沿用上述外部参数，把 `-Dtest` 改为 `ExternalHistoryIT`。首次新测试的合成重认证错误地更换 sender，生产授权正确拒绝为 UNAUTHORIZED；修正夹具保留原 sender 后 3/3 通过，没有改弱生产检查。此前暴露的回源登记竞态和 Redis 关闭顺序均已修复并重新回归。
+
+报告分别在 `.build-cache/mysql-runtime-verify/surefire-reports/` 与 `.build-cache/mysql-final-it/surefire-reports/`，未混入旧 target；性能独立报告路径见 performance.md。所有外部 suite 串行占用同一授权 schema，不与浏览器/基准同时运行。
+
+### 实际浏览器与清理
+
+测试专用 `ManagedBrowserFixture` 以回环 18680/18081 启动，用同一授权 owner 注入配置和 MySQL，随机缓存子键、新私有材料目录；假微信端口及模型拒绝真实出站。实际完成：管理员登录、A/B 两用户详情、A 的 4 次尝试/2020 输入/1500 已知缓存和 B 的 1 次/999 输入/0 缓存互相独立、标签作为文本渲染、空闲 45/历史 12/合成提示保存刷新、Key 空白不读回、RUNNING + 缓存退化、退出清空，以及另一页面刷新后登录失效。
+
+截图：`.build-cache/browser-acceptance.png`。浏览器页面已关闭，夹具进程退出，精确合成数据清理完成；仅保留生成的私有材料目录和本机证据，不删除旧业务。真实扫码、真实聊天、付费模型和生产应用均未操作。
+
+### CI、镜像与剩余六项
+
+手动默认分支 `external-integration` job 已接入独立受保护 Environment、配置秘密和明确审批变量。脚本只允许 GitHub-hosted 临时 runner，先预热单元/测试提供者依赖，再限制 IPv4 数据服务/回环出站并离线执行 IT，最后移除本次规则/配置。Shell 语法和 workflow 契约已验，**没有实际配置或运行 GitHub 环境，也不在工作站执行防火墙脚本**。正式镜像外部运行阶段尚未闭合，原有发布失败门禁保留。
+
+Docker **29.5.2 / Colima arm64** 已有，但没有所需基础镜像缓存。正式 `linux/arm64` 构建两次在 Docker Hub 拉取阶段失败；移除额外 Dockerfile frontend 拉取后，`eclipse-temurin:21-jre-jammy` 仍在 `auth.docker.io` 连接重置，Maven 基础镜像元数据任务取消。没有成功构建镜像或可报告摘要；amd64 未运行，不能把本机 JAR 测试替代双架构结果。需要操作者恢复 registry/proxy 可用性或提供可信、可核验的基础镜像。
+
+| 未完成任务 | 已有证据 / 缺少条件 |
+| --- | --- |
+| 2.3 | 空库初始化、识别布局重开及拒绝逻辑已验；真实部分/未知/不兼容 DDL 故障需要另外授权的可丢弃安全 schema，不能破坏当前布局。 |
+| 4.6 | 应用侧故障、回调、隔离已验；实际旧 MySQL 备份恢复与服务级淘汰仍缺安全目标/授权，不以模拟替代。 |
+| 7.4 | 单元、显式外部 CI 接线及发布门禁已实现；独立 CI 目标未配置/运行，正式镜像外部运行阶段仍需完成并验收。 |
+| 7.5 | 独立探针与候选 JAR、本机权限/引导/降级已验；正式镜像 root/non-root、引导、缓存启停及故障尚未运行。 |
+| 8.4 | 两架构正式镜像运行被基础镜像拉取失败阻断；需要分别记录原生/仿真、实际读写与在途停止，不以构建代替运行。 |
+| 8.5 | 授权 NAS 合成兼容性已验；两个真实账号扫码/对话/时间问答、重认证、部署重建及备份恢复需各自授权和安全环境。 |
+
+替换关系不变：MySQL 取代旧 change 的 SQLite 业务与本地业务备份，Redis 是有界可丢弃历史副本；动态时间在原历史后、当前问题前，不再承诺完整上一轮请求前缀逐字延续。仍保留旧身份/认证/未知投递/用量原则。旧 change 的 47/52 和未完成真实验收不代勾，不自动同步重叠规格。
+
+## macOS 外部服务业务续作（2026-09-30，先前阶段）
+
+当前 **26/45**。本段优先于下方旧交接的阻塞/未接线说明；新增完成 **2.4–2.6、3.1–3.5、3.7、6.2、7.1、7.3**，不是整个 change 或发布验收完成。旧 change 状态未修改。
+
+### 已验证与修复
+
+- 用户已填写 Git 忽略、私有权限的 `config/external-services.local.yml` 并授权项目专用 schema 的初始化及合成测试。保持 MySQL `ssl-mode: DISABLED`、Redis `tls: false`，没有开启公钥自动获取或修改真实凭据。连接成功不推断服务器认证变化原因。
+- 本次实际服务为 **MySQL 8.0.46 / Redis 7.4.9**，客户端 **Connector/J 9.6.0 / HikariCP 6.3.3 / Lettuce 6.6.0.RELEASE**；本机为 macOS arm64、Java 21.0.12.1、Maven 3.9.16。历史 8.0.44 / 7.2.12 不作为本次结果。只读授权检查未见全局权限，具有目标库建表/读取权限；没有将其宣称为生产最小权限/Redis ACL 全部验收。
+- 在当前授权空 schema 实际初始化 **0→V2，20 表**，后续 V2 重开、固定 V001/V002 链、唯一性/外键/精确身份、Unicode/大整数和实际分页全部通过。未为复测破坏、降级或清空布局。真实未知/部分 DDL 故障及恢复覆盖仍在 2.3/4.6/8.5 待验。
+- 完整 repositories/API/二维码/调度均已接入池化 MySQL。新增并发配额/领取测试：两个用户争一个全局名额只能接收一份；竞争领取只有一个阶段成功，失败批次的事件、会话、活动关系和游标全部回滚。原同用户顺序、慢用户隔离、ABA、重认证/替换、模型热切换、分页和审计回归保留。
+- 新增第二个完整 `ManagedStore` 竞争测试：第一实例同时有 PROCESSING、SENDING、STARTED attempt 和有效邀请时，第二实例被拒绝，所有状态及 epoch 不变。正常释放后新实例才推进 epoch，恢复为中断/未知、撤销旧邀请，并生成新缓存运行命名空间。
+- 新增测试自有锁连接中止后，模型返回前、用量已落库但回复未保存、发送已发出三个断点的迟到成功。旧 owner 永久失效；新 epoch 不采纳迟到成功、不重放、不接受旧长轮询或重复消息。已保存的用量保留，未能可靠保存的用量为未知，不虚构成功。
+- 新故障测试暴露并修复：原 RuntimeManager 只暂停数据库访问，没有取消存量连接。现在永久所有权丢失时关闭所有 channel/取消调度，普通池连接临时错误仍可暂停。BindingCoordinator 也在失去所有权时终止二维码任务；一个数据库取消失败不再跳过后续任务的客户端/材料清理。真实测试验证在途工作收到中断、端口关闭、迟到二维码结果不能激活身份。这不等于完整 8 秒关闭预算已实现。
+- 新增 `docs/mysql-redis-operations.md` 与 `docs/mysql-redis-development.md`：专用权限、缓存 ACL/TTL、无 SSL 选择、秘密/材料、初始管理员、MySQL 升级/备份/安全恢复/旧部署回滚、分离测试及 CI 门禁。README 指向新文档；旧 SQLite 部署/开发/CI/覆盖说明标为历史，不再作为当前入口。权限说明依据当前代码调用点，未改变服务账号或共享配置。
+
+### 本次引擎证据
+
+完整 `-Pexternal-services test`：**73 tests，9 suites，0 failures，0 errors，0 skipped**。
+
+| 测试集 | 通过数 |
+| --- | --- |
+| ManagedRepositoryIT | 30 |
+| RuntimeManagerIT | 18 |
+| BindingCoordinatorIT | 11 |
+| AdminApiIT | 9 |
+| ExternalServicesIT / ExternalSchemaIT / ExternalPaginationIT / ExternalTransactionsIT / ExternalHistoryIT | 各 1，共 5 |
+
+执行环境前置：`JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home`，`JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp`。Maven 参数：
+
+```sh
+mvn -o -Dmaven.repo.local=.build-cache/m2 \
+  -Dtalkweave.build-directory=.build-cache/mysql-runtime-it -Pexternal-services \
+  -Dtalkweave.it.config=/Users/chenqiang/code/talkweave/config/external-services.local.yml \
+  -Dtalkweave.it.mysql-schema=talkweave -Dtalkweave.it.redis-prefix=talkweave \
+  -Dtalkweave.it.mysql-version=8.0.46 -Dtalkweave.it.redis-version=7.4.9 \
+  -Dtalkweave.it.allow-schema-initialization=true -Dtalkweave.it.allow-schema-upgrade=true test -q
+```
+
+测试报告位于 `.build-cache/mysql-runtime-it/surefire-reports/`。首轮 66 项通过；新增取消测试曾以“期望 0 连接、实际 2”失败，修复后全量 73 项通过，不隐藏该失败。测试仅清理最初无业务且始终独占的合成记录，保留 schema、安装 ID、epoch、自增水位；临时表随连接关闭，Redis 随机子键 60 秒到期。未停止共享服务、终止其他连接、部署应用、扫码、调用付费模型或覆盖恢复。
+
+`ExternalHistoryIT` 已证实过滤先于 LIMIT、N=0、未来边界、重复投递、实际索引计划，以及热命中正文查询为零/送达后增量。该测试使用 **1000ms 命令、2000ms 阶段**，不能算默认 100/250ms 或长会话负载验收。3.6 的长历史补测、4.1–4.7 的系统故障/边界/并发覆盖与性能矩阵仍未完成。
+
+本次收尾：Java 单元 **228/228**（27 suites，零失败/错误/跳过）、Node 页面竞态 **14/14**、OpenSpec strict 与 `git diff --check` 均通过。Java 命令为上述 Java 21/临时目录环境下 `mvn -o -Dmaven.repo.local=.build-cache/m2 -Dtalkweave.build-directory=.build-cache/mysql-runtime-verify -Dtalkweave.artifact-name=talkweave-mysql-candidate verify -q`，未混入旧 target 报告。
+
+同次候选 `talkweave-mysql-candidate.jar` 和独立 diagnostics JAR 经 PropertiesLauncher 实际执行 `ManagedContainerProbe --artifact`，返回 `CI_MANAGED_OK mode=--artifact externalServices=NOT_RUN externalCalls=0`。候选输出只在 `.build-cache/mysql-runtime-verify/`，没有覆盖旧运行 JAR。正式包检查通过不替代镜像外部服务验收。
+
+### 仍待推进
+
+**19 项待完成**：2.3、3.6、4.1–4.7、6.5、7.2、7.4–7.5、8.1–8.6。优先补缓存故障/慢响应/并发和长历史、整体 ≤8 秒生命周期、受授权配置保护的合成浏览器入口与性能矩阵。独立 CI 配置/双架构正式镜像、真实扫码/付费模型与安全恢复目标各有独立验收边界；未配置/未运行不能算通过。当前 CI 在镜像导出前继续阻断发布，不归档、不同步主规格、不提交推送、不自动部署。
+
+## macOS 独立诊断续作（2026-09-30，先前阶段）
+
+用户恢复实施后完成任务 **6.4**，当前 **14/45**；本节优先于下方先前暂停与历史记录。尚未完成的实现和验收不补勾，不归档、同步主规格、提交、推送或发布。
+
+- 更新 `WorkflowContractTest` 为仅含应用的外部服务 Compose、私有材料/只读配置挂载、独立诊断包及离线烟测契约；保留认证/发布权限保护，新增断言确认外部运行验收缺失时发布步骤明确失败且位于镜像导出之前。没有把离线检查替代运行验收，也没有放行 CI 发布。
+- 强化 `ManagedContainerProbe` 及其回归：要求 MySQL 与内部健康入口，拒绝 SQLite、旧 SQL 目录、旧授权类、诊断入口和测试夹具。实际检查同次构建的独立 diagnostics JAR 与正式应用 JAR；诊断包不含测试类/浏览器夹具。微信、双账号、模型探针与公共辅助代码均位于独立包，现有显式网络授权测试通过。
+- 增加 `talkweave.build-directory`（默认仍为 `target`），支持不清理/覆盖旧运行产物的全新输出目录。首次在旧 `target` 增量打包时检查拒绝了残留的旧 SQL/目录；其历史测试报告也不能计入本次数量。随后从全新的 `.build-cache/mysql-runtime-verify` 构建候选并通过实际产物检查。旧 `target` 与旧运行 JAR 均保留，前者的增量候选不可用作交付。
+- 更新 `scripts/diagnostics/README.md` 的构建、加载、离线检查、真实调用授权说明；更新双账号文档为显式加载 diagnostics JAR，不再使用 SQLite 参数。仅完成工具分离，不代表 root/non-root 容器、8 秒关闭或正式镜像的外部服务运行验证完成。
+
+本次环境：macOS arm64；Homebrew OpenJDK **21.0.12.1**；Maven **3.9.16**。测试 JVM 启动前设置 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp`，避免 macOS 默认 `/var` 符号链接触发私有路径拒绝；未改弱生产安全校验。依赖缓存使用 `.build-cache/m2`，缺少的 MySQL/Redis 依赖经权限机制补齐。
+
+| 验证 | 结果 |
+| --- | --- |
+| `mvn -o -Dmaven.repo.local=.build-cache/m2 -Dtalkweave.build-directory=.build-cache/mysql-runtime-verify -Dtalkweave.artifact-name=talkweave-mysql-candidate verify -q`（上述 Java 21/临时目录环境） | **228 tests，0 failures，0 errors，0 skipped，27 suites**；从全新目录的报告统计，不包含旧报告。 |
+| `node --test src/test/js/binding-ui.test.cjs src/test/js/admin-details-ui.test.cjs` | **14/14 通过**；合成 DOM，不等于浏览器 E2E。 |
+| 独立 diagnostics JAR 通过 `PropertiesLauncher` 检查同次正式候选 JAR | `CI_MANAGED_OK mode=--artifact externalServices=NOT_RUN externalCalls=0`。 |
+
+当时缺少本机外部配置的阻塞已解除，用户填写文件并授权后按本页最上方记录完成真实引擎回归。以下旧暂停/版本/未接线说明按历史保留，不代表当前代码状态。
+
 ## 暂停交接点（2026-09-30，用户要求下班前暂停并本地提交）
 
 **状态：PAUSED / WIP。停止后续实施、测试和部署，仅记录交接并保存本地 Git 提交；不得把本提交作为已验收版本部署。** 以下交接点优先于后文按阶段保留的历史记录；后文“尚未替换 SQLite”“公共模板仍使用 TLS”等描述不代表当前源码。

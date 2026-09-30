@@ -140,6 +140,30 @@ class BindingCoordinatorIT {
             assertThat(f.create(b)).isNotNull();
         }
     }
+    @Test void lockLossDisposesAllQrJobsEvenWhenDurableCancellationFails() throws Exception {
+        var gate = new CountDownLatch(1);
+        try (var f = new Fixture(true)) {
+            var a = f.users.create("a"); var b = f.users.create("b");
+            var aa = f.create(a); var bb = f.create(b); f.ready(aa); f.ready(bb);
+            for (var port : f.ports) { port.gate = gate; port.reply = confirmed("late"); }
+            f.coordinator.tick(); await(() -> f.ports.stream().allMatch(p -> p.polling.get()));
+            database.abortOwnLockConnection();
+            rejected(ManagedProblem.Code.DATABASE_UNAVAILABLE, f.coordinator::tick);
+            assertThat(f.ports).allMatch(p -> p.closed);
+            assertThat(directory.resolve("binding-materials").resolve(aa.id())).doesNotExist();
+            assertThat(directory.resolve("binding-materials").resolve(bb.id())).doesNotExist();
+            gate.countDown(); await(() -> f.ports.stream().noneMatch(p -> p.polling.get()));
+            f.store.close();
+            try (var next = database.open()) {
+                var users = new ManagedUsers(next, clock);
+                assertThat(users.attempt(a.id(), aa.id()).phase()).isEqualTo(Phase.CANCELLED);
+                assertThat(users.attempt(b.id(), bb.id()).phase()).isEqualTo(Phase.CANCELLED);
+                assertThat(users.activeScopes()).isEmpty();
+                f.coordinator.tick(); assertThat(f.activated).isEmpty();
+                assertThat(f.ports).allMatch(p -> p.validations.get() == 0);
+            }
+        } finally { gate.countDown(); }
+    }
     private class Fixture implements AutoCloseable {
         final ManagedStore store = database.open();
         final ManagedUsers users = new ManagedUsers(store, clock);
@@ -168,6 +192,7 @@ class BindingCoordinatorIT {
         volatile boolean closed;
         volatile CountDownLatch gate;
         final AtomicBoolean polling = new AtomicBoolean();
+        final AtomicInteger validations = new AtomicInteger();
         final List<String> codes = new CopyOnWriteArrayList<>();
         FakePort(int index) { this.index = index; }
         @Override public QrCode request() { return new QrCode("private-qr-" + index, "private-display-" + index); }
@@ -177,7 +202,7 @@ class BindingCoordinatorIT {
             try { if (gate != null) { while (gate.getCount() != 0) { try { if (!gate.await(3, TimeUnit.SECONDS)) throw new AssertionError("gate timeout"); } catch (InterruptedException ignored) { } } } return result; }
             finally { polling.set(false); }
         }
-        @Override public void validate(Credentials credentials) { if (credentials == null) throw new IllegalArgumentException("synthetic missing credentials"); }
+        @Override public void validate(Credentials credentials) { validations.incrementAndGet(); if (credentials == null) throw new IllegalArgumentException("synthetic missing credentials"); }
         @Override public void close() { closed = true; }
     }
     static LoginStatus confirmed(String id) { return new LoginStatus(LoginPhase.CONFIRMED, null, new Credentials("bot-" + id, "secret-token-" + id, WechatApiClient.LOGIN_ORIGIN, "scanner-" + id)); }

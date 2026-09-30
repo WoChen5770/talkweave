@@ -1,5 +1,7 @@
 # Scenario 验证映射
 
+> 历史单用户 SQLite 覆盖，不作为当前验收。当前替代关系见 [MySQL/Redis 覆盖清单](../openspec/changes/adopt-mysql-redis-conversation-runtime/coverage.md)。
+
 日期：2026-09-28。覆盖本 change 四份规格的全部 46 个 Scenario。表格中的“离线通过”仅表示临时本地磁盘/合成协议测试，真实服务和 NAS 条件另行验收。没有把已建立映射的人工场景标为验收完成。
 
 本轮命令：`mvn -o -s .build-cache/maven-settings.xml -gs .build-cache/maven-settings.xml -B -Dstyle.color=never verify`。结果 **129 tests，0 failures，0 errors，1 skipped**；输出 Spring Boot JAR。Windows ACL 测试经授权在沙箱外执行。原生符号链接测试因 Windows 平台跳过，Mockito 拒绝分支测试通过；Jimfs 依赖下载失败后未保留该依赖，也未把模拟称为原生实测。

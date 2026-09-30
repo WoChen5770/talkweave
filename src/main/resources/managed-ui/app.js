@@ -36,8 +36,11 @@ function connectionLabel(value) {
 }
 async function loadUsers() {
   const [users, runtime] = await Promise.all([api('/users'), api('/runtime')]); if (!signedIn) return;
-  const healthNames = {STARTING:'正在启动',RUNNING:'正常',DATABASE_UNAVAILABLE:'数据库不可用，暂停接收',LOW_DISK:'可用磁盘不足，暂停接收',GLOBAL_BACKLOG:'全局消息积压，暂停新增接收',CONNECTION_LIMIT:'连接数已达上限',STOPPED:'已停止'};
-  $('runtime-status').textContent = '运行管理器：' + (healthNames[runtime.health] || '状态未知') + ' · 已加载连接 ' + runtime.activeConnections + ' / ' + runtime.maxConnections;  $('users').replaceChildren(); $('users-empty').hidden = users.length !== 0;
+  const healthNames = {STARTING:'正在启动',RUNNING:'正常',DATABASE_UNAVAILABLE:'数据库不可用，暂停接收',LOW_DISK:'私有材料目录空间不足，暂停接收',GLOBAL_BACKLOG:'全局消息积压，暂停新增接收',CONNECTION_LIMIT:'连接数已达上限',STOPPED:'已停止'};
+  const cacheNames = {AVAILABLE:'可用',DEGRADED:'退化，使用 MySQL 历史',DISABLED:'已关闭，使用 MySQL 历史'};
+  const cacheStatus = runtime.historyCache ? ' · 历史缓存：' + (cacheNames[runtime.historyCache.state] || '状态未知') : '';
+  $('runtime-status').textContent = '运行管理器：' + (healthNames[runtime.health] || '状态未知') + ' · 已加载连接 ' + runtime.activeConnections + ' / ' + runtime.maxConnections + cacheStatus;
+  $('users').replaceChildren(); $('users-empty').hidden = users.length !== 0;
   const auditUser=$('audit-user').value; $('audit-user').replaceChildren(); option($('audit-user'),'','全部操作');
   for (const user of users) option($('audit-user'),user.id,user.label);
   if (users.some(user=>user.id===auditUser)) $('audit-user').value=auditUser;

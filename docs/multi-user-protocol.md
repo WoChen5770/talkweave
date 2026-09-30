@@ -71,7 +71,8 @@
 
 ```bash
 java -Dloader.main=io.github.wochen5770.talkweave.runtime.probe.TwoAccountWechatProbe \
-  -Dorg.sqlite.tmpdir=/tmp -cp target/talkweave-0.1.0-SNAPSHOT.jar \
+  -Dloader.path=target/talkweave-0.1.0-SNAPSHOT-diagnostics.jar \
+  -cp target/talkweave-0.1.0-SNAPSHOT.jar \
   org.springframework.boot.loader.launch.PropertiesLauncher \
   --allow-live-wechat /private/probes/two-account-run-01
 ```
@@ -85,6 +86,7 @@ java -Dloader.main=io.github.wochen5770.talkweave.runtime.probe.TwoAccountWechat
 
 ```bash
 java -Dloader.main=io.github.wochen5770.talkweave.runtime.probe.TwoAccountWechatProbe \
+  -Dloader.path=target/talkweave-0.1.0-SNAPSHOT-diagnostics.jar \
   -cp target/talkweave-0.1.0-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher \
   --allow-live-wechat --allow-relogin /private/probes/two-account-run-02
 ```

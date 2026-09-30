@@ -70,28 +70,68 @@ class WorkflowContractTest {
         assertThat(steps(publish).toString()).contains("docker load", "sha256sum -c", "docker push");
         assertThat(steps(manifest).toString()).contains("for arch in amd64 arm64", "imagetools create", "manifest.json");
     }
-    @Test void smokeCannotCallExternalServicesAndNasOnlyPullsTheImage() throws Exception {
+    @Test void offlineSmokeUsesExplicitDiagnosticsAndCannotClaimRuntimeAcceptance() throws Exception {
         String smoke = Files.readString(Path.of("scripts/ci/image-smoke.sh"));
-        assertThat(smoke).contains("--network none", "--read-only", "--write --verify", "--mount", "--entrypoint java", "ContainerStorageProbe")
-                .doesNotContain("MODEL_API_KEY", "WECHAT_BOT_ID", "config/application.yml", "\r");
-        var service = map(map(yaml("compose.yml").get("services")).get("assistant"));
+        assertThat(smoke).contains("--network none", "--read-only", "--mount", "--entrypoint java",
+                        "ManagedContainerProbe", "-Dloader.path=/diagnostics.jar", "--artifact /app/assistant.jar",
+                        "--materials", "--legacy", "--user", "target=/app/materials,volume-nocopy",
+                        "offlineArtifactAndMaterials=PASS", "externalServices=NOT_RUN")
+                .doesNotContain("MODEL_API_KEY", "WECHAT_BOT_ID", "config/application.yml", "ContainerStorageProbe", "\r");
+        var buildSteps = steps(jobs().get("build"));
+        var gate = buildSteps.stream().filter(step -> step.getOrDefault("name", "").toString()
+                .equals("Require external-service runtime acceptance before publication")).findFirst().orElseThrow();
+        assertThat(gate.get("if")).isEqualTo("needs.verify.outputs.publish == 'true'");
+        assertThat(gate.get("run").toString()).contains("Publication blocked", "exit 1");
+        assertThat(buildSteps.indexOf(gate)).isLessThan(buildSteps.indexOf(buildSteps.stream()
+                .filter(step -> step.getOrDefault("run", "").toString().contains("docker save")).findFirst().orElseThrow()));
+        assertThat(buildSteps.toString()).contains("diagnostics/talkweave-0.1.0-SNAPSHOT-diagnostics.jar");
+    }
+    @Test void composeUsesOnlyExternalServicesAndPrivateMaterials() throws Exception {
+        var services = map(yaml("compose.yml").get("services"));
+        assertThat(services).containsOnlyKeys("assistant");
+        var service = map(services.get("assistant"));
         assertThat(service).doesNotContainKeys("build", "stop_grace_period", "command", "privileged");
         assertThat(service).containsEntry("image", "ghcr.io/wochen5770/talkweave:latest");
         assertThat(service).containsEntry("read_only", true).containsEntry("user", "${ASSISTANT_UID:-0}:${ASSISTANT_GID:-0}");
         assertThat((List<String>) service.get("ports")).containsExactly("${ADMIN_BIND_ADDRESS:-127.0.0.1}:${ADMIN_PORT:-8680}:8680");
-        assertThat(service.get("volumes").toString()).contains("./data-multi-user").doesNotContain("application.yml", "docker.sock");
-        assertThat(map(service.get("environment"))).containsEntry("MANAGED_DATA_DIR", "/app/data");
-        assertThat(smoke).contains("ManagedContainerProbe", "--user", "--web", "docker stop");
-        assertThat(smoke).contains("target=/app/data,volume-nocopy");
+        var volumes = (List<Map<String, Object>>) service.get("volumes");
+        assertThat(volumes).hasSize(2);
+        for (var volume : volumes) {
+            assertThat(volume).containsEntry("type", "bind");
+            assertThat(map(volume.get("bind"))).containsEntry("create_host_path", false);
+        }
+        assertThat(volumes.get(0)).containsEntry("source", "${ASSISTANT_HOST_MATERIALS:-./materials}")
+                .containsEntry("target", "/app/materials");
+        assertThat(volumes.get(1)).containsEntry("source", "${EXTERNAL_SERVICES_CONFIG:-./config/external-services.local.yml}")
+                .containsEntry("target", "/app/config/external-services.yml").containsEntry("read_only", true);
+        assertThat(service.get("volumes").toString()).doesNotContain("data-multi-user", "application.yml", "docker.sock");
+        assertThat(map(service.get("environment")))
+                .containsEntry("MANAGED_MATERIALS_DIRECTORY", "/app/materials")
+                .containsEntry("EXTERNAL_SERVICES_CONFIG", "/app/config/external-services.yml")
+                .doesNotContainKey("MANAGED_DATA_DIR");
+    }
+    @Test void productionImageKeepsSecretsAndDiagnosticsOutside() throws Exception {
         String ignore = Files.readString(Path.of(".dockerignore"));
         assertThat(ignore).contains("**\n", "!src/**", "!.github/workflows/container.yml")
                 .doesNotContain("!config", "!data", "!.env", "!.build-cache");
         String docker = Files.readString(Path.of("Dockerfile"));
         assertThat(docker).contains("USER 10001:10001", "COPY --from=build", "FROM ${RUNTIME_IMAGE}");
-        assertThat(docker).contains("optional:file:/app/config/application.yml", "ADMIN_ADDRESS=0.0.0.0");
+        assertThat(docker).contains("EXTERNAL_SERVICES_CONFIG=/app/config/external-services.yml", "ADMIN_ADDRESS=0.0.0.0");
         assertThat(docker).contains("EXPOSE 8680");
         assertThat(map(yaml("src/main/resources/application-managed.yml").get("server")))
                 .containsEntry("port", "${ADMIN_PORT:8680}");
-        assertThat(docker.substring(docker.indexOf("FROM ${RUNTIME_IMAGE}"))).doesNotContain("COPY src", "COPY config", "COPY data");
+        assertThat(docker.substring(docker.indexOf("FROM ${RUNTIME_IMAGE}")))
+                .doesNotContain("COPY src", "COPY config", "COPY data", "diagnostics.jar", "sqlite");
+    }
+    @Test void externalIntegrationIsExplicitProtectedAndCannotOpenPublicationGate() throws Exception {
+        var external=map(jobs().get("external-integration"));
+        assertThat(external.get("if").toString()).contains("workflow_dispatch","inputs.external_integration","github.event.repository.default_branch");
+        assertThat(external.get("environment")).isEqualTo("external-integration");
+        assertThat(steps(external).toString()).contains("secrets.EXTERNAL_SERVICES_YAML","APPROVED_MYSQL_SCHEMA","EXPECTED_REDIS_VERSION")
+                .doesNotContain("external-services.local.yml","docker run","packages=write");
+        String script=Files.readString(Path.of("scripts/ci/external-services.sh"));
+        assertThat(script).contains("github-hosted","umask 077","trap cleanup EXIT","ExternalNetworkTargets",
+                "iptables -I OUTPUT 1","ip6tables -I OUTPUT 1","-j REJECT","mvn -o", "externalServices=PASS")
+                .doesNotContain("FLUSHALL","FLUSHDB","TRUNCATE","docker run");
     }
 }

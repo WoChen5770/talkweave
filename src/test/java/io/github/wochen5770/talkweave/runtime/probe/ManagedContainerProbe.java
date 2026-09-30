@@ -25,12 +25,17 @@ public final class ManagedContainerProbe {
     static void artifact(Path path) throws Exception {
         try(var jar = new ZipFile(path.toFile())) {
             var entries = jar.stream().map(e -> e.getName()).toList();
-            if (entries.stream().anyMatch(n -> n.contains("/runtime/probe/") || n.contains("sqlite") || n.contains("SqliteStore")
-                    || n.endsWith("/AssistantRuntime.class") || n.endsWith("/AssistantProperties.class") || n.contains("Fixture")))
+            if (entries.stream().anyMatch(n -> n.contains("/runtime/probe/") || n.toLowerCase(java.util.Locale.ROOT).contains("sqlite")
+                    || n.contains("/db/migration/") || n.contains("/db/managed/")
+                    || n.endsWith("/AssistantRuntime.class") || n.contains("/AssistantProperties")
+                    || n.endsWith("/ConversationRepository.class") || n.endsWith("/ConversationWorker.class")
+                    || n.endsWith("/LoginCoordinator.class") || n.endsWith("/IdentityVerifier.class")
+                    || n.endsWith("/InboxReceiver.class") || n.endsWith("/WechatOutbound.class") || n.contains("Fixture")))
                 throw new IllegalStateException("Retired or diagnostic content packaged");
             if (entries.stream().noneMatch(n -> n.endsWith("/managed/persistence/ManagedStore.class"))
                     || entries.stream().noneMatch(n -> n.contains("/mysql-connector-j-"))
-                    || entries.stream().noneMatch(n -> n.endsWith("/db/mysql/V002__conversation_pagination.sql")))
+                    || entries.stream().noneMatch(n -> n.endsWith("/db/mysql/V002__conversation_pagination.sql"))
+                    || entries.stream().noneMatch(n -> n.endsWith("/runtime/HealthCheck.class")))
                 throw new IllegalStateException("Required MySQL runtime missing");
         }
     }

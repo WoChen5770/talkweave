@@ -1,8 +1,43 @@
-# 外部服务只读检查
+# 独立诊断工具
+
+诊断入口位于 test 源集，打包为单独的 `*-diagnostics.jar`，不包含测试类或浏览器夹具，也不进入正式业务 JAR/镜像。必须使用同一次构建的应用 JAR 和诊断 JAR；正常 `java -jar` 不加载诊断包。`scripts/diagnostics/legacy/` 仅保留历史参考，不能作为当前可运行工具。
+
+## 构建与离线产物检查
+
+使用 Java 21。可指定全新输出目录，避免本地旧 `target` 中残留已退役的 class/SQL，也不必清理可能仍在使用的旧运行 JAR：
+
+```sh
+mvn -Dtalkweave.build-directory=.build-cache/mysql-runtime-verify \
+  -Dtalkweave.artifact-name=talkweave-mysql-candidate verify
+
+java -Dloader.path=.build-cache/mysql-runtime-verify/talkweave-mysql-candidate-diagnostics.jar \
+  -Dloader.main=io.github.wochen5770.talkweave.runtime.probe.ManagedContainerProbe \
+  -cp .build-cache/mysql-runtime-verify/talkweave-mysql-candidate.jar \
+  org.springframework.boot.loader.launch.PropertiesLauncher \
+  --artifact .build-cache/mysql-runtime-verify/talkweave-mysql-candidate.jar
+```
+
+没有覆盖输出参数时仍使用 `target/talkweave-0.1.0-SNAPSHOT{,-diagnostics}.jar`。本地依赖缓存可通过 `-Dmaven.repo.local=...` 指定；macOS 安全测试需要时，在 JVM 启动前设置 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp`，不放宽生产路径的符号链接拒绝。
+
+`ManagedContainerProbe` 只支持三个离线模式：`--artifact <正式JAR>` 检查当前 MySQL/健康组件、拒绝旧实现/迁移资源/诊断入口/夹具；`--materials <新子目录>` 验证私有材料初始化与重开；`--legacy <新子目录>` 创建合成旧文件并验证拒绝后无修改。后两者拒绝已存在的目标目录，不能指向真实数据。容器烟测 `scripts/ci/image-smoke.sh <image> <platform> <diagnostics.jar>` 在无网络、只读根环境中运行这些模式，分别检查 root/non-root，明确输出 `externalServices=NOT_RUN`；它不代表管理员、外部服务、在途停止或两架构运行验收通过。
+
+## 微信与模型诊断（必须单独授权）
+
+所有入口通过上述 `PropertiesLauncher` 与显式 `-Dloader.path` 加载。将 `-Dloader.main` 替换为对应的完整类名，并在 launcher 后传递参数：
+
+| 入口（包名均为 `io.github.wochen5770.talkweave.runtime.probe`） | 参数和边界 |
+| --- | --- |
+| `WechatConnectivityProbe` | `--allow-live-wechat <全新私有目录>`；真实扫码和收发须操作者在场授权。 |
+| `TwoAccountWechatProbe` | `--allow-live-wechat [--allow-relogin] <全新私有目录>`；重认证另需允许撤销旧凭据，不与同绑定的旧实例并行。 |
+| `ModelConnectivityProbe` | `--check-config <私有YAML>` 仅校验 `assistant.model`，不联网；`--allow-paid-model-check <私有YAML> <全新私有目录>` 至多两次真实模型请求，须单独付费调用授权。 |
+
+模型诊断 YAML 只由显式文件加载，不继承 Spring 启动配置、环境秘密或导入文件；不保存对话正文，不自动重试或恢复已开始的运行目录。探针不依赖 MySQL，也不能替代管理端全链路验收。协议帮助文本保留其观察工具身份；生产授权仍由当前身份解析器限制范围。
+
+## 外部服务只读检查
 
 `ExternalServicesCheck.java` 是独立 Java 21 源文件工具，不在 Maven 生产/测试源码目录中，不随正常业务 JAR 发布，也不会被应用自动调用。它只读取操作者指定的本地 YAML，不启动 Spring 应用。
 
-运行需要 SnakeYAML 2.4 与 MySQL Connector/J 9.6.0 的本地 classpath。本轮使用项目 Spring Boot 3.5.13 BOM 指定且本机已有的这两个版本；它们用于诊断，不代表生产 MySQL 运行链路已接好或验收通过。
+运行需要 SnakeYAML 2.4 与 MySQL Connector/J 9.6.0 的本地 classpath，与当前固定依赖一致；连接检查不代表生产 MySQL 链路已完整验收。
 
 ```powershell
 # 将两个占位路径替换为本机已有的 JAR 路径；密码只能留在 Git 忽略的配置中。
@@ -44,7 +79,7 @@ mvn -Pexternal-services '-Dtest=ExternalServicesIT' '-Dtalkweave.it.config=C:/pr
 - Redis 使用配置前缀下的随机 `:it:<uuid>:history-v1` 键，`EVAL`/`GET`/`PTTL` 验证精确版本比较；键只有合成内容，每次成功写入设置 60 秒 TTL，不扫描或清空共享服务。
 - `ExternalSchemaIT` 由原 `NasSchemaIT` 迁移；额外要求初始化和布局升级开关，取得独占锁后只读确认所有业务表为空、设置仍为初值，再打开布局/推进 epoch。已有业务行时拒绝，不清理或重置业务夹具。空库初始化后追加 V002，精确匹配 V1 只追加分页序号/索引，V2 直接重开；不创建数据库/用户，不使用 `DROP`/`TRUNCATE`。保留 20 张项目表、安装标记和 epoch；合成行在短事务中回滚，随机标签区分每次运行。自增高水位增长不等于业务行残留。报告区分实际 fromVersion=1 的升级与 fromVersion=2 的重开，禁止为重复测试降级或改写 V001。
 - `ExternalPaginationIT` 在自有连接临时表上执行与正式 V002 相同的追加语句，验证非空合成行原文保留、稳定按用户游标和超过 2^53 的序号；这不是已承载业务的完整 schema 升级验收。实际项目表的外键/归属约束仍由 `ExternalSchemaIT` 验证，升级中断分类由无网络 `MysqlLayoutTest` 验证；不在共享 NAS 制造失败布局。
-- `ExternalTransactionsIT` 同样要求明确的初始化/升级开关和空业务保护（并发测试需连接池至少 2 个连接）。测试池内并行短事务、合成行回滚、JDBC 64 位生成主键，以及仅中止测试自己的独占锁连接后原实例永久失效；替代 owner 重开会增加 epoch。不会终止其他连接或停止服务；事务基础已验不等于 ManagedStore/运行面已换型。
-- 已初始化库要用于真实业务前仍须完成仓储、运行权和缓存接线，以及完整集成验收；初始化通过不表示应用已切换到 MySQL。
+- `ExternalTransactionsIT` 同样要求明确的初始化/升级开关和空业务保护（并发测试需连接池至少 2 个连接）。测试池内并行短事务、合成行回滚、JDBC 64 位生成主键，以及仅中止测试自己的独占锁连接后原实例永久失效；替代 owner 重开会增加 epoch。不会终止其他连接或停止服务；事务基础通过不等于完整业务故障验收。
+- 仓储、运行权和缓存已接入源码，但已初始化库用于真实业务前仍须完成整个 change 的集成验收；初始化通过或构建成功不表示现有运行中的应用已升级。
 - CI 必须由维护者独立配置授权的受保护文件和范围；不能默认使用本机 NAS 文件。这里提供外部集成入口，不表示 CI 发布门禁、2.6/3.7/4.6 的业务故障/恢复已完成。未执行环境明确待验。不停止或重启共享服务，不向真实模型/微信发请求。
 - `scripts/maven-public-settings.xml` 是显式可选的公开 Maven Central 镜像设置，不更改用户/全局设置；本机可用 `-Dmaven.repo.local=<既有缓存路径>` 指定缓存。

@@ -16,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 @Configuration(proxyBeanMethods = false)
 @Profile("managed")
 public class ManagedAdminConfiguration {
+    @Bean static ManagedShutdown managedShutdown() { return new ManagedShutdown(); }
     @Bean org.springframework.boot.autoconfigure.jackson.Jackson2ObjectMapperBuilderCustomizer strictManagementJson() {
         return builder -> builder.featuresToEnable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,
                         com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
@@ -32,11 +33,11 @@ public class ManagedAdminConfiguration {
         ManagedMaterials.inspect(config.materialsPath());
         return config;
     }
-    @Bean(destroyMethod = "close") @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(ManagedStore.class)
+    @Bean(destroyMethod = "") @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(ManagedStore.class)
     ManagedStore managedStore(ExternalServices config) {
         return ManagedStore.open(config.mysql());
     }
-    @Bean(destroyMethod = "close") ManagedMaterials managedMaterials(ManagedStore store, ExternalServices config) {
+    @Bean(destroyMethod = "") ManagedMaterials managedMaterials(ManagedStore store, ExternalServices config) {
         return ManagedMaterials.open(config.materialsPath(), store.installationId());
     }
     @Bean RuntimeLimits runtimeLimits(Environment env) {
@@ -51,8 +52,10 @@ public class ManagedAdminConfiguration {
     @Bean ManagedConversations managedConversations(ManagedStore store, Clock clock, RuntimeLimits limits) {
         return new ManagedConversations(store, clock, limits.perUserBacklog(), limits.totalBacklog());
     }
-    @Bean(destroyMethod = "close") ManagedModelPool managedModelPool() { return new ManagedModelPool(); }
-    @Bean(destroyMethod = "close") HistoryService historyService(ManagedStore store, ManagedConversations conversations, ExternalServices config) {
+    @Bean(destroyMethod = "") @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(ManagedModelPool.class)
+    ManagedModelPool managedModelPool() { return new ManagedModelPool(); }
+    @Bean(destroyMethod = "") @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(HistoryService.class)
+    HistoryService historyService(ManagedStore store, ManagedConversations conversations, ExternalServices config) {
         return new HistoryService(conversations, config.historyCache(), config.historyCache().enabled()
                 ? new RedisHistoryCache(config.redis(), config.historyCache()) : null, store.installationId(), store.cacheEpoch());
     }
@@ -62,7 +65,7 @@ public class ManagedAdminConfiguration {
                 .orElse(java.util.List.of("ilinkai.weixin.qq.com"));
         return ChannelRuntime.wechatPorts(java.util.Set.copyOf(hosts));
     }
-    @Bean(initMethod = "start", destroyMethod = "close")
+    @Bean(initMethod = "start", destroyMethod = "")
     RuntimeManager runtimeManager(ManagedUsers users, ManagedSettings settings, ManagedConversations conversations,
                                   ManagedUsage usage, RuntimeLimits limits, ChannelRuntime.Ports ports, ManagedModelPool models, Environment env,
                                   ConversationTimeContext timeContext, ExternalServices config, ManagedMaterials materials, HistoryService history) {
@@ -87,7 +90,7 @@ public class ManagedAdminConfiguration {
                 .orElse(java.util.List.of("ilinkai.weixin.qq.com"));
         return io.github.wochen5770.talkweave.managed.binding.BindingCoordinator.wechatPorts(java.util.Set.copyOf(hosts));
     }
-    @Bean(initMethod = "start", destroyMethod = "close")
+    @Bean(initMethod = "start", destroyMethod = "")
     io.github.wochen5770.talkweave.managed.binding.BindingCoordinator bindingCoordinator(ManagedUsers users,
             io.github.wochen5770.talkweave.managed.binding.BindingMaterials materials,
             io.github.wochen5770.talkweave.managed.binding.BindingCoordinator.Ports ports, Clock clock, RuntimeManager runtime) {

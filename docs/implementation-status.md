@@ -1,5 +1,7 @@
 # 实施状态与验证记录
 
+> 历史单用户 SQLite 记录，不适用于当前运行链路。当前进度见 [MySQL/Redis 实施记录](../openspec/changes/adopt-mysql-redis-conversation-runtime/implementation-status.md)。
+
 日期：2026-09-28。
 
 ## 进度

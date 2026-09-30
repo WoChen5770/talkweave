@@ -1,4 +1,6 @@
-# Copy to config/application.yml (ignored by version control). Do not commit real keys.
+# HISTORICAL single-user SQLite configuration; NOT a current production template.
+# Current deployment uses config.external-services.example.yml and the authenticated model settings page.
+# Retained only to explain old deployments; these fields cannot re-enable the retired runtime.
 assistant:
   enabled: true # Starts outbound WeChat connections. false = storage/configuration check only.
   health-port: 8081 # Container-local loopback only.

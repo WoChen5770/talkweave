@@ -32,7 +32,8 @@ public final class BindingCoordinator implements AutoCloseable {
     private final Map<String, Job> jobs = new HashMap<>();
     private final ThreadPoolExecutor network;
     private final ScheduledExecutorService ticks = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("binding-ticks").factory());
-    private boolean closed;
+    private volatile boolean closed;
+    private boolean disposed;
     private boolean started;
     private static final class Job {
         final Attempt initial;
@@ -190,6 +191,13 @@ public final class BindingCoordinator implements AutoCloseable {
         Job job = jobs.get(attempt.id()); return OPEN.contains(attempt.phase()) && job != null && job.imageReady && !job.disposed;
     }
     private void sweep() {
+        try { sweepJobs(); }
+        catch (RuntimeException failure) {
+            if (users.runtimeOwnershipLost()) close();
+            throw failure;
+        }
+    }
+    private void sweepJobs() {
         for (Job job : List.copyOf(jobs.values())) {
             Attempt a = users.attempt(job.initial.userId(), job.initial.id());
             if (!OPEN.contains(a.phase())) dispose(job);
@@ -214,10 +222,17 @@ public final class BindingCoordinator implements AutoCloseable {
         try { job.port.close(); } finally { materials.clear(job.initial.id()); }
     }
     private static Status status(Attempt a, boolean ready) { return new Status(a.id(), a.userId(), a.authEpoch(), a.mode(), a.phase(), a.expiresAt(), ready); }
+    public void quiesce() { closed = true; ticks.shutdownNow(); network.shutdownNow(); }
     @Override public synchronized void close() {
-        if (closed) return;
-        closed = true; ticks.shutdownNow();
-        try { for (Job job : List.copyOf(jobs.values())) finish(job, Phase.CANCELLED); }
+        quiesce();
+        if (disposed) return;
+        disposed = true;
+        try {
+            for (Job job : List.copyOf(jobs.values())) {
+                // A failed durable cancellation must not strand other clients or private QR files.
+                try { finish(job, Phase.CANCELLED); } catch (RuntimeException ignored) { }
+            }
+        }
         finally { network.shutdownNow(); }
     }
 }

@@ -260,6 +260,58 @@ class RuntimeManagerIT {
         }
     }
 
+    @Test void losingOwnLockCancelsEveryChannelAndNeverRestartsOldRuntime() throws Exception {
+        var gate = new CountDownLatch(1);
+        try (var f = new Fixture(2, 10, 20)) {
+            var a = f.bind("a"); var b = f.bind("b");
+            f.blockUser = a.userId(); f.modelGate = gate; f.start();
+            var pa = f.port(a); var pb = f.port(b);
+            pa.offer(batch("a1", message(a, "one", "in-flight")));
+            await(() -> f.calls.size() == 1);
+            database.abortOwnLockConnection(); f.manager.reconcile();
+            assertThat(f.manager.status().health()).isEqualTo(RuntimeManager.Health.DATABASE_UNAVAILABLE);
+            assertThat(f.manager.status().activeConnections()).isZero();
+            assertThat(pa.closed).isTrue(); assertThat(pb.closed).isTrue();
+            await(() -> f.modelInterrupted.get());
+            gate.countDown();
+            f.store.close();
+            try (var next = database.open()) {
+                f.manager.reconcile();
+                assertThat(f.manager.status().health()).isEqualTo(RuntimeManager.Health.DATABASE_UNAVAILABLE);
+                assertThat(f.ports).hasSize(2); assertThat(f.calls).hasSize(1);
+                assertThat(pa.sent).isEmpty(); assertThat(pb.sent).isEmpty();
+                assertThat(pa.typings).containsExactly(true);
+                long unknown = next.transaction(c -> Sql.scalar(c, "SELECT count(*) FROM model_attempt WHERE outcome='UNKNOWN'"));
+                assertThat(unknown).isEqualTo(1);
+            }
+        } finally { gate.countDown(); }
+    }
+
+    @Test void sharedShutdownBoundsAnUncooperativeModelAndFencesLateResults() throws Exception {
+        var gate=new CountDownLatch(1);
+        try(var f=new Fixture(2,10,20)) {
+            var a=f.bind("a"); f.bind("b"); f.blockUser=a.userId(); f.modelGate=gate; f.start();
+            var port=f.port(a); port.offer(batch("shutdown",message(a,"one","in-flight")));
+            await(()->f.calls.size()==1);
+            var shutdown=new ManagedShutdown();
+            shutdown.postProcessBeforeInitialization(f.store,"store");
+            shutdown.postProcessBeforeInitialization(f.manager,"runtime");
+            long start=System.nanoTime(); shutdown.destroy();
+            assertThat(System.nanoTime()-start).isLessThan(TimeUnit.SECONDS.toNanos(8));
+            assertThat(shutdown.result().complete()).isFalse();
+            assertThat(shutdown.result().failed()).contains("runtime");
+            assertThat(f.modelInterrupted).isTrue(); assertThat(port.sent).isEmpty();
+            assertThat(f.ports).allMatch(p->p.closed); assertThat(f.store.ownershipLost()).isTrue();
+            gate.countDown();
+            try(var next=database.open()) {
+                long interrupted=next.transaction(c->Sql.scalar(c,"SELECT count(*) FROM turn WHERE stage='INTERRUPTED'"));
+                long unknown=next.transaction(c->Sql.scalar(c,"SELECT count(*) FROM model_attempt WHERE outcome='UNKNOWN'"));
+                assertThat(interrupted).isEqualTo(1L); assertThat(unknown).isEqualTo(1L);
+                assertThat(port.sent).isEmpty();
+            }
+        } finally { gate.countDown(); }
+    }
+
     private final class Fixture implements AutoCloseable {
         final ManagedStore store=database.open();
         final ManagedUsers users=new ManagedUsers(store,Clock.systemUTC());
@@ -269,6 +321,7 @@ class RuntimeManagerIT {
         final List<FakePort> ports=new CopyOnWriteArrayList<>();
         final List<Call> calls=new CopyOnWriteArrayList<>();
         final AtomicLong free=new AtomicLong(Long.MAX_VALUE);
+        final AtomicBoolean modelInterrupted=new AtomicBoolean();
         final RuntimeManager manager;
         volatile String blockUser,failUser; volatile CountDownLatch modelGate;
         Fixture(int concurrency,int perUser,int total) { this(concurrency,perUser,total,100); }
@@ -279,7 +332,14 @@ class RuntimeManagerIT {
                 () -> { var p=new FakePort(); ports.add(p); return p; },
                 (snapshot,context,messages,observer) -> {
                     observer.beforeAttempt(1); calls.add(new Call(context,List.copyOf(messages)));
-                    if (context.userId().equals(blockUser) && modelGate!=null) awaitIgnoringInterrupt(modelGate);
+                    if (context.userId().equals(blockUser) && modelGate!=null) {
+                        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+                        while (modelGate.getCount() != 0) {
+                            try { modelGate.await(20, TimeUnit.MILLISECONDS); }
+                            catch (InterruptedException ignored) { modelInterrupted.set(true); }
+                            if (System.nanoTime() > deadline) throw new AssertionError("model gate timeout");
+                        }
+                    }
                     if (context.userId().equals(failUser)) { observer.afterAttempt(1,ModelAttemptObserver.Outcome.UNKNOWN,TokenUsage.unknown()); throw new RemoteFailure(RemoteFailure.Source.MODEL,RemoteFailure.Kind.TIMEOUT); }
                     observer.afterAttempt(1,ModelAttemptObserver.Outcome.SUCCEEDED,TokenUsage.normalize(10,2,5));
                     return new AssistantService.Reply("reply-"+messages.getLast().text(),false);

@@ -1,5 +1,7 @@
 # 多用户 change 场景覆盖与验收记录
 
+> 旧 SQLite 多用户 change 的历史证据，任务状态不由本轮修改。当前真实引擎替代覆盖见 [MySQL/Redis 覆盖清单](../openspec/changes/adopt-mysql-redis-conversation-runtime/coverage.md)。
+
 本表逐项对应六份 delta spec，不将组件测试等同于应用接线、真实微信协议或 NAS 发布验收。普通测试仅使用临时数据库、可控时钟、合成身份和本地 HTTP 服务。
 
 ## 实际执行范围

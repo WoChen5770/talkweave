@@ -24,6 +24,8 @@ public final class ManagedUsers {
     private final Clock clock;
     public ManagedUsers(ManagedStore store, Clock clock) { this.store = store; this.clock = clock; }
 
+    public boolean runtimeOwnershipLost() { return store.ownershipLost(); }
+
     public User create(String label) {
         if (label == null || label.isBlank() || label.length() > 100 || label.chars().anyMatch(Character::isISOControl)) throw new ManagedProblem(INVALID_INPUT);
         return store.transaction(c -> {

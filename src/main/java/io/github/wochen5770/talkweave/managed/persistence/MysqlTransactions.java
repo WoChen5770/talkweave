@@ -13,6 +13,13 @@ final class MysqlTransactions {
     private final DataSource source;
     private final MysqlOwnership owner;
     private final long epoch;
+    private final java.util.concurrent.atomic.LongAdder acquireNanos = new java.util.concurrent.atomic.LongAdder();
+    long acquireNanos() { return acquireNanos.sum(); }
+    private Connection acquire() throws SQLException {
+        long start = System.nanoTime();
+        try { return source.getConnection(); }
+        finally { acquireNanos.add(System.nanoTime() - start); }
+    }
 
     MysqlTransactions(DataSource source, MysqlOwnership owner, long epoch) {
         this.source = Objects.requireNonNull(source);
@@ -25,7 +32,7 @@ final class MysqlTransactions {
         Objects.requireNonNull(work);
         for (int attempt = 0; ; attempt++) {
             checkActive();
-            try (var c = source.getConnection()) {
+            try (var c = acquire()) {
                 if (!c.getAutoCommit()) throw new ManagedProblem(DATABASE_UNAVAILABLE);
                 c.setAutoCommit(false);
                 boolean resetSafe = false;
